@@ -965,6 +965,7 @@ dependencies = [
 name = "waydoodle"
 version = "0.1.0"
 dependencies = [
+ "async-channel",
  "ksni",
  "macro_rules_attribute",
  "smol",

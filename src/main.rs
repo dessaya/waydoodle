@@ -1,17 +1,20 @@
+use async_channel::{self, Sender};
 use macro_rules_attribute::apply;
 use smol_macros::main;
 
-use ksni::TrayMethods; // provides the spawn method
+use ksni::TrayMethods;
 
 #[derive(Debug)]
-struct MyTray {}
+struct MyTray {
+    toggle_tx: Sender<()>,
+}
 
 impl ksni::Tray for MyTray {
     fn id(&self) -> String {
         env!("CARGO_PKG_NAME").into()
     }
     fn icon_name(&self) -> String {
-        "view-fullscreen".into()
+        "input-tablet".into()
     }
     fn title(&self) -> String {
         "Waydoodle".into()
@@ -21,7 +24,9 @@ impl ksni::Tray for MyTray {
         vec![
             StandardItem {
                 label: "Show/Hide".into(),
-                activate: Box::new(|_| std::process::exit(0)),
+                activate: Box::new(|this: &mut Self| {
+                    let _ = this.toggle_tx.try_send(());
+                }),
                 ..Default::default()
             }
             .into(),
@@ -37,7 +42,13 @@ impl ksni::Tray for MyTray {
 
 #[apply(main!)]
 async fn main() {
-    let tray = MyTray {};
+    let (toggle_tx, toggle_rx) = async_channel::bounded(1);
+
+    let tray = MyTray { toggle_tx };
     _ = tray.spawn().await.unwrap();
-    std::future::pending().await
+
+    loop {
+        let _ = toggle_rx.recv().await;
+        println!("Toggle!");
+    }
 }
