@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+ashpd = { version = "0.13", default-features = false, features = ["async-io", "global_shortcuts"] }
 async-channel = "2"
+futures-lite = "2"
 ksni = { version = "0.3", default-features = false, features = ["async-io"] }
 macro_rules_attribute = "0.2"
 smol = "2"

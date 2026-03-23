@@ -1,54 +1,24 @@
-use async_channel::{self, Sender};
+mod global_shortcuts;
+mod tray;
+
+use async_channel;
+use futures_lite::future::zip;
 use macro_rules_attribute::apply;
 use smol_macros::main;
-
-use ksni::TrayMethods;
-
-#[derive(Debug)]
-struct MyTray {
-    toggle_tx: Sender<()>,
-}
-
-impl ksni::Tray for MyTray {
-    fn id(&self) -> String {
-        env!("CARGO_PKG_NAME").into()
-    }
-    fn icon_name(&self) -> String {
-        "input-tablet".into()
-    }
-    fn title(&self) -> String {
-        "Waydoodle".into()
-    }
-    fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
-        use ksni::menu::*;
-        vec![
-            StandardItem {
-                label: "Show/Hide".into(),
-                activate: Box::new(|this: &mut Self| {
-                    let _ = this.toggle_tx.try_send(());
-                }),
-                ..Default::default()
-            }
-            .into(),
-            StandardItem {
-                label: "Exit".into(),
-                activate: Box::new(|_| std::process::exit(0)),
-                ..Default::default()
-            }
-            .into(),
-        ]
-    }
-}
 
 #[apply(main!)]
 async fn main() {
     let (toggle_tx, toggle_rx) = async_channel::bounded(1);
 
-    let tray = MyTray { toggle_tx };
-    _ = tray.spawn().await.unwrap();
+    let _ = tray::spawn_tray(toggle_tx.clone()).await;
 
-    loop {
-        let _ = toggle_rx.recv().await;
-        println!("Toggle!");
-    }
+    // Run the shortcut listener concurrently with the tray menu toggle receiver.
+    let shortcut_fut = global_shortcuts::listen_shortcut(toggle_tx);
+    let toggle_loop = async {
+        loop {
+            let _ = toggle_rx.recv().await;
+            println!("Toggle!");
+        }
+    };
+    zip(shortcut_fut, toggle_loop).await;
 }
