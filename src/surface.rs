@@ -18,6 +18,8 @@ use wayland_protocols::wp::tablet::zv2::client::{
 };
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
+use crate::canvas::Canvas;
+
 /// Handle to a running Wayland surface that can be toggled on/off.
 ///
 /// The Wayland connection lives on a dedicated thread. The public API (e.g. the
@@ -107,6 +109,7 @@ struct State {
     configured: bool,
     width: u32,
     height: u32,
+    canvas: Canvas,
 }
 
 struct SurfaceObjects {
@@ -138,6 +141,7 @@ impl State {
             configured: false,
             width: 0,
             height: 0,
+            canvas: Canvas::new(),
         }
     }
 
@@ -162,6 +166,7 @@ impl State {
         wl_surface.commit();
 
         self.configured = false;
+        self.canvas.clear();
         self.surface_objects = Some(SurfaceObjects {
             wl_surface,
             xdg_surface,
@@ -173,6 +178,8 @@ impl State {
 
     fn hide(&mut self) {
         if let Some(objs) = self.surface_objects.take() {
+            self.canvas.unmap();
+            self.canvas.reset_input();
             if let Some(buf) = objs.buffer {
                 buf.destroy();
             }
@@ -200,28 +207,7 @@ impl State {
         // Create an anonymous shared‑memory file.
         let file = create_shm_file(size);
 
-        // Fill with semi‑transparent black (ARGB8888: 0x80000000).
-        {
-            let ptr = unsafe {
-                libc::mmap(
-                    std::ptr::null_mut(),
-                    size,
-                    libc::PROT_WRITE,
-                    libc::MAP_SHARED,
-                    file.as_fd().as_raw_fd(),
-                    0,
-                )
-            };
-            assert_ne!(ptr, libc::MAP_FAILED);
-            let slice = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u32, size / 4) };
-            for pixel in slice.iter_mut() {
-                // Semi-transparent black — lets the desktop show through.
-                *pixel = 0x80_00_00_00;
-            }
-            unsafe {
-                libc::munmap(ptr, size);
-            }
-        }
+        self.canvas.attach(&file, width, height);
 
         // Destroy old buffer/pool if any.
         if let Some(buf) = objs.buffer.take() {
@@ -325,7 +311,7 @@ impl Dispatch<wl_seat::WlSeat, ()> for State {
     }
 }
 
-// wl_pointer — set crosshair cursor on pointer enter.
+// wl_pointer — set crosshair cursor on enter, track button/motion for drawing.
 impl Dispatch<wl_pointer::WlPointer, ()> for State {
     fn event(
         state: &mut Self,
@@ -335,18 +321,49 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-        if let wl_pointer::Event::Enter {
-            serial,
-            surface: _,
-            surface_x: _,
-            surface_y: _,
-        } = event
-        {
-            let cursor_surface = state.pointer_cursor_surface.clone();
-            let pointer = pointer.clone();
-            state.set_crosshair_cursor(&cursor_surface, |surface, hx, hy| {
-                pointer.set_cursor(serial, Some(surface), hx, hy);
-            });
+        match event {
+            wl_pointer::Event::Enter {
+                serial,
+                surface: _,
+                surface_x,
+                surface_y,
+            } => {
+                state.canvas.pointer_enter(surface_x, surface_y);
+                let cursor_surface = state.pointer_cursor_surface.clone();
+                let pointer = pointer.clone();
+                state.set_crosshair_cursor(&cursor_surface, |surface, hx, hy| {
+                    pointer.set_cursor(serial, Some(surface), hx, hy);
+                });
+            }
+            wl_pointer::Event::Leave { .. } => {
+                state.canvas.pointer_leave();
+            }
+            wl_pointer::Event::Motion {
+                surface_x,
+                surface_y,
+                ..
+            } => {
+                state.canvas.pointer_motion(surface_x, surface_y);
+            }
+            wl_pointer::Event::Button {
+                button,
+                state: btn_state,
+                ..
+            } => {
+                // BTN_LEFT = 0x110 = 272
+                if button == 272 {
+                    let pressed =
+                        btn_state == wayland_client::WEnum::Value(wl_pointer::ButtonState::Pressed);
+                    state.canvas.pointer_button(pressed);
+                }
+            }
+            wl_pointer::Event::Frame => {
+                if let Some(objs) = state.surface_objects.as_ref() {
+                    let wl_surface = objs.wl_surface.clone();
+                    state.canvas.pointer_frame(&wl_surface);
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -391,7 +408,7 @@ impl Dispatch<zwp_tablet_seat_v2::ZwpTabletSeatV2, ()> for State {
     }
 }
 
-// zwp_tablet_tool_v2 — set crosshair cursor on proximity-in.
+// zwp_tablet_tool_v2 — set crosshair cursor on proximity-in, draw on tip down + motion.
 impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for State {
     fn event(
         state: &mut Self,
@@ -401,17 +418,37 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for State {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-        if let zwp_tablet_tool_v2::Event::ProximityIn {
-            serial,
-            tablet: _,
-            surface: _,
-        } = event
-        {
-            let cursor_surface = state.tablet_cursor_surface.clone();
-            let tool = tool.clone();
-            state.set_crosshair_cursor(&cursor_surface, |surface, hx, hy| {
-                tool.set_cursor(serial, Some(surface), hx, hy);
-            });
+        match event {
+            zwp_tablet_tool_v2::Event::ProximityIn {
+                serial,
+                tablet: _,
+                surface: _,
+            } => {
+                let cursor_surface = state.tablet_cursor_surface.clone();
+                let tool = tool.clone();
+                state.set_crosshair_cursor(&cursor_surface, |surface, hx, hy| {
+                    tool.set_cursor(serial, Some(surface), hx, hy);
+                });
+            }
+            zwp_tablet_tool_v2::Event::ProximityOut => {
+                state.canvas.tablet_proximity_out();
+            }
+            zwp_tablet_tool_v2::Event::Down { .. } => {
+                state.canvas.tablet_down();
+            }
+            zwp_tablet_tool_v2::Event::Up => {
+                state.canvas.tablet_up();
+            }
+            zwp_tablet_tool_v2::Event::Motion { x, y } => {
+                state.canvas.tablet_motion(x, y);
+            }
+            zwp_tablet_tool_v2::Event::Frame { .. } => {
+                if let Some(objs) = state.surface_objects.as_ref() {
+                    let wl_surface = objs.wl_surface.clone();
+                    state.canvas.tablet_frame(&wl_surface);
+                }
+            }
+            _ => {}
         }
     }
 }

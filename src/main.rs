@@ -1,3 +1,4 @@
+mod canvas;
 mod global_shortcut;
 mod surface;
 mod tray;
