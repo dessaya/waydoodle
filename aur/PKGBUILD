@@ -1,42 +1,31 @@
 # Maintainer: Diego Essaya <dessaya at gmail dot com>
-pkgname=waydoodle-git
-pkgver=0.1.0.r18.f8caa9b
+pkgname=waydoodle
+pkgver=0.1.0
 pkgrel=1
 pkgdesc="A minimalistic screen annotation tool for Wayland"
 arch=('x86_64' 'aarch64')
 url="https://github.com/dessaya/waydoodle"
 license=('MIT')
-depends=('gcc-libs')
+depends=('gcc-libs' 'wayland')
 makedepends=('git' 'cargo')
-provides=('waydoodle')
-conflicts=('waydoodle')
-source=("git+${url}.git")
+source=("git+${url}.git#tag=v${pkgver}")
 sha256sums=('SKIP')
 
-pkgver() {
-    cd waydoodle
-    if git describe --long --tags 2>/dev/null | grep -q .; then
-        git describe --long --tags | sed 's/^v//;s/-/.r/;s/-/./'
-    else
-        printf "0.1.0.r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
-    fi
-}
-
 prepare() {
-    cd waydoodle
+    cd $pkgname
     export RUSTUP_TOOLCHAIN=stable
     cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
 }
 
 build() {
-    cd waydoodle
+    cd $pkgname
     export RUSTUP_TOOLCHAIN=stable
     export CARGO_TARGET_DIR=target
     cargo build --frozen --release
 }
 
 package() {
-    cd waydoodle
+    cd $pkgname
     install -Dm755 target/release/waydoodle "$pkgdir/usr/bin/waydoodle"
     install -Dm644 assets/waydoodle.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/waydoodle.svg"
     install -Dm644 assets/waydoodle.desktop "$pkgdir/usr/share/applications/waydoodle.desktop"

@@ -27,11 +27,11 @@ cargo install --path .
 
 ### Arch Linux (AUR)
 
-Install the [`waydoodle-git`](https://aur.archlinux.org/packages/waydoodle-git)
+Install the [`waydoodle`](https://aur.archlinux.org/packages/waydoodle)
 package with your preferred AUR helper:
 
 ```
-paru -S waydoodle-git
+paru -S waydoodle
 ```
 
 ## Usage
