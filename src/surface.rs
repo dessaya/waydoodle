@@ -63,13 +63,14 @@ impl SurfaceHandle {
             .expect("zwp_tablet_manager_v2 not available");
         let _tablet_seat = tablet_manager.get_tablet_seat(&seat, &qh, ());
 
-        let mut state = State::new();
-        state.compositor = Some(compositor);
-        state.shm = Some(shm);
-        state.wm_base = Some(wm_base);
-        state.cursor_theme = Some(cursor_theme);
-        state.pointer_cursor_surface = Some(pointer_cursor_surface);
-        state.tablet_cursor_surface = Some(tablet_cursor_surface);
+        let state = State::new(
+            compositor,
+            shm,
+            wm_base,
+            cursor_theme,
+            pointer_cursor_surface,
+            tablet_cursor_surface,
+        );
 
         std::thread::Builder::new()
             .name("wayland-surface".into())
@@ -93,14 +94,13 @@ impl SurfaceHandle {
 }
 
 struct State {
-    running: bool,
-    compositor: Option<wl_compositor::WlCompositor>,
-    shm: Option<wl_shm::WlShm>,
-    wm_base: Option<xdg_wm_base::XdgWmBase>,
+    compositor: wl_compositor::WlCompositor,
+    shm: wl_shm::WlShm,
+    wm_base: xdg_wm_base::XdgWmBase,
     pointer: Option<wl_pointer::WlPointer>,
-    cursor_theme: Option<CursorTheme>,
-    pointer_cursor_surface: Option<wl_surface::WlSurface>,
-    tablet_cursor_surface: Option<wl_surface::WlSurface>,
+    cursor_theme: CursorTheme,
+    pointer_cursor_surface: wl_surface::WlSurface,
+    tablet_cursor_surface: wl_surface::WlSurface,
     // Active surface objects (None when hidden)
     surface_objects: Option<SurfaceObjects>,
     // We only track width/height so we can create a correctly sized buffer
@@ -118,16 +118,22 @@ struct SurfaceObjects {
 }
 
 impl State {
-    fn new() -> Self {
+    fn new(
+        compositor: wl_compositor::WlCompositor,
+        shm: wl_shm::WlShm,
+        wm_base: xdg_wm_base::XdgWmBase,
+        cursor_theme: CursorTheme,
+        pointer_cursor_surface: wl_surface::WlSurface,
+        tablet_cursor_surface: wl_surface::WlSurface,
+    ) -> Self {
         Self {
-            running: true,
-            compositor: None,
-            shm: None,
-            wm_base: None,
+            compositor,
+            shm,
+            wm_base,
             pointer: None,
-            cursor_theme: None,
-            pointer_cursor_surface: None,
-            tablet_cursor_surface: None,
+            cursor_theme,
+            pointer_cursor_surface,
+            tablet_cursor_surface,
             surface_objects: None,
             configured: false,
             width: 0,
@@ -144,14 +150,8 @@ impl State {
             return; // already visible
         }
 
-        let compositor = self
-            .compositor
-            .as_ref()
-            .expect("wl_compositor not available");
-        let wm_base = self.wm_base.as_ref().expect("xdg_wm_base not available");
-
-        let wl_surface = compositor.create_surface(qh, ());
-        let xdg_surface = wm_base.get_xdg_surface(&wl_surface, qh, ());
+        let wl_surface = self.compositor.create_surface(qh, ());
+        let xdg_surface = self.wm_base.get_xdg_surface(&wl_surface, qh, ());
         let xdg_toplevel = xdg_surface.get_toplevel(qh, ());
 
         xdg_toplevel.set_title("Waydoodle".into());
@@ -192,10 +192,8 @@ impl State {
             None => return,
         };
 
-        let shm = self.shm.as_ref().expect("wl_shm not available");
-
-        let width = if self.width > 0 { self.width } else { 1920 };
-        let height = if self.height > 0 { self.height } else { 1080 };
+        let width = if self.width > 0 { self.width } else { 100 };
+        let height = if self.height > 0 { self.height } else { 100 };
         let stride = width * 4;
         let size = (stride * height) as usize;
 
@@ -233,7 +231,7 @@ impl State {
             pool.destroy();
         }
 
-        let pool = shm.create_pool(file.as_fd(), size as i32, qh, ());
+        let pool = self.shm.create_pool(file.as_fd(), size as i32, qh, ());
         let buffer = pool.create_buffer(
             0,
             width as i32,
@@ -258,14 +256,12 @@ impl State {
         cursor_surface: &wl_surface::WlSurface,
         set_cursor: impl FnOnce(&wl_surface::WlSurface, i32, i32),
     ) {
-        if let Some(theme) = self.cursor_theme.as_mut() {
-            if let Some(cursor) = theme.get_cursor("crosshair") {
-                let image = &cursor[0];
-                let (hotspot_x, hotspot_y) = image.hotspot();
-                cursor_surface.attach(Some(&image), 0, 0);
-                cursor_surface.commit();
-                set_cursor(cursor_surface, hotspot_x as i32, hotspot_y as i32);
-            }
+        if let Some(cursor) = self.cursor_theme.get_cursor("crosshair") {
+            let image = &cursor[0];
+            let (hotspot_x, hotspot_y) = image.hotspot();
+            cursor_surface.attach(Some(&image), 0, 0);
+            cursor_surface.commit();
+            set_cursor(cursor_surface, hotspot_x as i32, hotspot_y as i32);
         }
     }
 }
@@ -346,12 +342,11 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
             surface_y: _,
         } = event
         {
-            if let Some(cursor_surface) = state.pointer_cursor_surface.clone() {
-                let pointer = pointer.clone();
-                state.set_crosshair_cursor(&cursor_surface, |surface, hx, hy| {
-                    pointer.set_cursor(serial, Some(surface), hx, hy);
-                });
-            }
+            let cursor_surface = state.pointer_cursor_surface.clone();
+            let pointer = pointer.clone();
+            state.set_crosshair_cursor(&cursor_surface, |surface, hx, hy| {
+                pointer.set_cursor(serial, Some(surface), hx, hy);
+            });
         }
     }
 }
@@ -412,12 +407,11 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for State {
             surface: _,
         } = event
         {
-            if let Some(cursor_surface) = state.tablet_cursor_surface.clone() {
-                let tool = tool.clone();
-                state.set_crosshair_cursor(&cursor_surface, |surface, hx, hy| {
-                    tool.set_cursor(serial, Some(surface), hx, hy);
-                });
-            }
+            let cursor_surface = state.tablet_cursor_surface.clone();
+            let tool = tool.clone();
+            state.set_crosshair_cursor(&cursor_surface, |surface, hx, hy| {
+                tool.set_cursor(serial, Some(surface), hx, hy);
+            });
         }
     }
 }
@@ -501,7 +495,7 @@ fn run(
 
     eprintln!("[surface] Wayland thread running");
 
-    while state.running {
+    loop {
         if conn.flush().is_err() {
             eprintln!("[surface] Wayland connection lost");
             break;
