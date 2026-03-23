@@ -6,8 +6,8 @@ use wayland_client::{
     Connection, Dispatch, EventQueue, QueueHandle, delegate_noop,
     globals::{GlobalList, GlobalListContents, registry_queue_init},
     protocol::{
-        wl_buffer, wl_callback, wl_compositor, wl_output, wl_pointer, wl_registry, wl_seat, wl_shm,
-        wl_shm_pool, wl_surface,
+        wl_buffer, wl_callback, wl_compositor, wl_keyboard, wl_output, wl_pointer, wl_registry,
+        wl_seat, wl_shm, wl_shm_pool, wl_surface,
     },
 };
 use wayland_cursor::CursorTheme;
@@ -100,6 +100,7 @@ struct State {
     shm: wl_shm::WlShm,
     wm_base: xdg_wm_base::XdgWmBase,
     pointer: Option<wl_pointer::WlPointer>,
+    keyboard: Option<wl_keyboard::WlKeyboard>,
     cursor_theme: CursorTheme,
     pointer_cursor_surface: wl_surface::WlSurface,
     tablet_cursor_surface: wl_surface::WlSurface,
@@ -134,6 +135,7 @@ impl State {
             shm,
             wm_base,
             pointer: None,
+            keyboard: None,
             cursor_theme,
             pointer_cursor_surface,
             tablet_cursor_surface,
@@ -153,6 +155,8 @@ impl State {
         if self.is_visible() {
             return; // already visible
         }
+
+        eprintln!("[surface] Showing overlay");
 
         let wl_surface = self.compositor.create_surface(qh, ());
         let xdg_surface = self.wm_base.get_xdg_surface(&wl_surface, qh, ());
@@ -178,6 +182,7 @@ impl State {
 
     fn hide(&mut self) {
         if let Some(objs) = self.surface_objects.take() {
+            eprintln!("[surface] Hiding overlay");
             self.canvas.unmap();
             self.canvas.reset_input();
             if let Some(buf) = objs.buffer {
@@ -285,7 +290,7 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
     }
 }
 
-// wl_seat — track pointer capability and bind if available.
+// wl_seat — track pointer and keyboard capabilities and bind if available.
 impl Dispatch<wl_seat::WlSeat, ()> for State {
     fn event(
         state: &mut Self,
@@ -299,13 +304,44 @@ impl Dispatch<wl_seat::WlSeat, ()> for State {
             capabilities: cap_flags,
         } = event
         {
-            let has_pointer = cap_flags
-                .into_result()
+            let caps = cap_flags.into_result().ok();
+
+            let has_pointer = caps
                 .map(|c| c.contains(wl_seat::Capability::Pointer))
                 .unwrap_or(false);
-
             if has_pointer && state.pointer.is_none() {
                 state.pointer = Some(seat.get_pointer(qh, ()));
+            }
+
+            let has_keyboard = caps
+                .map(|c| c.contains(wl_seat::Capability::Keyboard))
+                .unwrap_or(false);
+            if has_keyboard && state.keyboard.is_none() {
+                state.keyboard = Some(seat.get_keyboard(qh, ()));
+            }
+        }
+    }
+}
+
+impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
+    fn event(
+        state: &mut Self,
+        _proxy: &wl_keyboard::WlKeyboard,
+        event: wl_keyboard::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        if let wl_keyboard::Event::Key {
+            key,
+            state: key_state,
+            ..
+        } = event
+        {
+            // KEY_ESC = 1 (Linux evdev keycode), pressed
+            if key == 1 && key_state == wayland_client::WEnum::Value(wl_keyboard::KeyState::Pressed)
+            {
+                state.hide();
             }
         }
     }
@@ -576,10 +612,8 @@ fn run(
                 );
             }
             if state.is_visible() {
-                eprintln!("[surface] Hiding overlay");
                 state.hide();
             } else {
-                eprintln!("[surface] Showing overlay");
                 state.show(&qh);
             }
         }
