@@ -2,6 +2,7 @@ use std::os::unix::io::{AsFd, AsRawFd, FromRawFd, OwnedFd};
 use std::sync::Arc;
 
 use wayland_client::event_created_child;
+use wayland_client::protocol::wl_shm::WlShm;
 use wayland_client::{
     Connection, Dispatch, EventQueue, QueueHandle, delegate_noop,
     globals::{GlobalList, GlobalListContents, registry_queue_init},
@@ -15,6 +16,7 @@ use wayland_protocols::wp::tablet::zv2::client::{
     zwp_tablet_pad_strip_v2, zwp_tablet_pad_v2, zwp_tablet_seat_v2, zwp_tablet_tool_v2,
     zwp_tablet_v2,
 };
+use wayland_protocols::xdg::shell::client::xdg_wm_base::XdgWmBase;
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
 use crate::canvas::{Canvas, Color, Tool};
@@ -71,11 +73,19 @@ impl SurfaceHandle {
             .expect("zwp_tablet_manager_v2 not available");
         let _tablet_seat = tablet_manager.get_tablet_seat(&seat, &qh, ());
 
-        let state = State::new(compositor, shm, wm_base, cursors);
-
         std::thread::Builder::new()
             .name("wayland-surface".into())
-            .spawn(move || run(conn, event_queue, state, thread_fd))
+            .spawn(move || {
+                run(
+                    conn,
+                    compositor,
+                    shm,
+                    wm_base,
+                    cursors,
+                    event_queue,
+                    thread_fd,
+                )
+            })
             .expect("Failed to spawn Wayland surface thread");
 
         Self { event_fd }
@@ -158,11 +168,8 @@ impl State {
         xdg_toplevel.set_app_id("waydoodle".into());
         xdg_toplevel.set_maximized();
 
-        // Commit to trigger the initial configure.
-        wl_surface.commit();
-
         self.configured = ConfigureState::Unconfigured;
-        self.canvas.clear();
+        self.canvas.clear_and_redraw(&wl_surface);
         self.surface_objects = Some(SurfaceObjects {
             wl_surface,
             xdg_surface,
@@ -175,8 +182,7 @@ impl State {
     fn hide(&mut self) {
         if let Some(objs) = self.surface_objects.take() {
             eprintln!("[surface] Hiding overlay");
-            self.canvas.unmap();
-            self.canvas.reset_input();
+            self.canvas.clear();
             if let Some(buf) = objs.buffer {
                 buf.destroy();
             }
@@ -546,10 +552,15 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
 
 fn run(
     conn: Connection,
+    compositor: wl_compositor::WlCompositor,
+    shm: WlShm,
+    wm_base: XdgWmBase,
+    cursors: CursorManager,
     mut event_queue: EventQueue<State>,
-    mut state: State,
     event_fd: Arc<OwnedFd>,
 ) {
+    let mut state = State::new(compositor, shm, wm_base, cursors);
+
     let qh = event_queue.handle();
     let wayland_fd = conn.prepare_read().unwrap().connection_fd().as_raw_fd();
     let event_raw_fd = event_fd.as_raw_fd();

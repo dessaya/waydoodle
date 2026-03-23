@@ -2,9 +2,6 @@ use std::os::unix::io::{AsFd, AsRawFd};
 
 use wayland_client::protocol::wl_surface;
 
-struct SendPtr(*mut u8);
-unsafe impl Send for SendPtr {}
-
 #[derive(Clone, Copy, PartialEq)]
 struct Coord {
     x: f64,
@@ -74,10 +71,9 @@ impl InputState {
 }
 
 pub struct Canvas {
-    shm_ptr: SendPtr,
+    shm_ptr: Option<*mut libc::c_void>,
     width: u32,
     height: u32,
-    strokes: Vec<(Coord, Coord, Tool)>,
     pointer: InputState,
     tablet: InputState,
     tool: Tool,
@@ -86,10 +82,9 @@ pub struct Canvas {
 impl Canvas {
     pub fn new() -> Self {
         Self {
-            shm_ptr: SendPtr(std::ptr::null_mut()),
+            shm_ptr: None,
             width: 0,
             height: 0,
-            strokes: Vec::new(),
             pointer: InputState::new(),
             tablet: InputState::new(),
             tool: Tool::Pen(Color::Red),
@@ -104,7 +99,6 @@ impl Canvas {
     /// background color and replaying any existing strokes.
     pub fn attach(&mut self, file: &impl AsFd, width: u32, height: u32) {
         let size = (width as usize) * (height as usize) * 4;
-
         let ptr = unsafe {
             libc::mmap(
                 std::ptr::null_mut(),
@@ -116,54 +110,46 @@ impl Canvas {
             )
         };
         assert_ne!(ptr, libc::MAP_FAILED);
+        self.set_shm_ptr(ptr, width, height);
+        self.clear_buffer();
+    }
 
+    fn clear_buffer(&self) {
         // Fill with transparent black (ARGB8888).
-        let slice = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u32, size / 4) };
-        for pixel in slice.iter_mut() {
-            *pixel = 0x00_00_00_00;
-        }
-
-        self.unmap();
-
-        self.shm_ptr = SendPtr(ptr as *mut u8);
-        self.width = width;
-        self.height = height;
-
-        // Replay existing strokes into the new buffer.
-        for &(from, to, tool) in &self.strokes {
-            draw_line_on_buffer(self.shm_ptr.0, width, height, from, to, tool);
-        }
-    }
-
-    /// Unmap the current pixel buffer (if any).
-    pub fn unmap(&mut self) {
-        if !self.shm_ptr.0.is_null() {
-            unsafe { libc::munmap(self.shm_ptr.0 as *mut libc::c_void, self.shm_size()) };
-            self.shm_ptr = SendPtr(std::ptr::null_mut());
-        }
-    }
-
-    /// Reset all drawing state and clear stored strokes.
-    pub fn clear(&mut self) {
-        self.strokes.clear();
-        self.reset_input();
-    }
-
-    /// Clear strokes and redraw the buffer (fill with transparent), then
-    /// damage + commit the surface so the change is visible immediately.
-    pub fn clear_and_redraw(&mut self, wl_surface: &wl_surface::WlSurface) {
-        self.strokes.clear();
-        self.reset_input();
-        if !self.shm_ptr.0.is_null() {
+        if let Some(ptr) = self.shm_ptr {
             let count = (self.width as usize) * (self.height as usize);
-            let pixels =
-                unsafe { std::slice::from_raw_parts_mut(self.shm_ptr.0 as *mut u32, count) };
-            for pixel in pixels.iter_mut() {
+            let slice = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u32, count) };
+            for pixel in slice.iter_mut() {
                 *pixel = 0x00_00_00_00;
             }
-            wl_surface.damage_buffer(0, 0, self.width as i32, self.height as i32);
-            wl_surface.commit();
         }
+    }
+
+    fn set_shm_ptr(&mut self, ptr: *mut libc::c_void, width: u32, height: u32) {
+        self.unmap();
+        self.shm_ptr = Some(ptr);
+        self.width = width;
+        self.height = height;
+    }
+
+    fn unmap(&self) {
+        if let Some(old_ptr) = self.shm_ptr {
+            unsafe { libc::munmap(old_ptr, self.shm_size()) };
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.tool = Tool::Pen(Color::Red);
+        self.reset_input();
+        self.clear_buffer();
+    }
+
+    /// Clear and redraw the buffer (fill with transparent), then
+    /// damage + commit the surface so the change is visible immediately.
+    pub fn clear_and_redraw(&mut self, wl_surface: &wl_surface::WlSurface) {
+        self.clear();
+        wl_surface.damage_buffer(0, 0, self.width as i32, self.height as i32);
+        wl_surface.commit();
     }
 
     /// Reset transient input state without clearing strokes.
@@ -187,14 +173,12 @@ impl Canvas {
     /// Record a line segment, draw it into the pixel buffer, and
     /// damage + commit the surface.
     fn draw_stroke(&mut self, from: Coord, to: Coord, wl_surface: &wl_surface::WlSurface) {
-        let tool = self.tool;
-        self.strokes.push((from, to, tool));
-        if self.shm_ptr.0.is_null() {
-            return;
+        if let Some(ptr) = self.shm_ptr {
+            let damage =
+                draw_line_on_buffer(ptr as *mut u8, self.width, self.height, from, to, self.tool);
+            wl_surface.damage_buffer(damage.x, damage.y, damage.width, damage.height);
+            wl_surface.commit();
         }
-        draw_line_on_buffer(self.shm_ptr.0, self.width, self.height, from, to, tool);
-        wl_surface.damage_buffer(0, 0, self.width as i32, self.height as i32);
-        wl_surface.commit();
     }
 
     pub fn pointer_enter(&mut self, x: f64, y: f64) {
@@ -260,17 +244,30 @@ impl Canvas {
     }
 }
 
-impl Drop for Canvas {
-    fn drop(&mut self) {
-        self.unmap();
-    }
+struct Rect {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
 }
 
-fn draw_line_on_buffer(ptr: *mut u8, width: u32, height: u32, from: Coord, to: Coord, tool: Tool) {
+fn draw_line_on_buffer(
+    ptr: *mut u8,
+    width: u32,
+    height: u32,
+    from: Coord,
+    to: Coord,
+    tool: Tool,
+) -> Rect {
     let pixels =
         unsafe { std::slice::from_raw_parts_mut(ptr as *mut u32, (width * height) as usize) };
     let color = tool.argb();
     let radius = tool.radius();
+
+    let mut min_x = i32::MAX;
+    let mut min_y = i32::MAX;
+    let mut max_x = i32::MIN;
+    let mut max_y = i32::MIN;
 
     let mut ix0 = from.x as i64;
     let mut iy0 = from.y as i64;
@@ -291,6 +288,10 @@ fn draw_line_on_buffer(ptr: *mut u8, width: u32, height: u32, from: Coord, to: C
                     let py = iy0 as i32 + by;
                     if px >= 0 && px < width as i32 && py >= 0 && py < height as i32 {
                         pixels[py as usize * width as usize + px as usize] = color;
+                        min_x = min_x.min(px);
+                        min_y = min_y.min(py);
+                        max_x = max_x.max(px);
+                        max_y = max_y.max(py);
                     }
                 }
             }
@@ -307,6 +308,22 @@ fn draw_line_on_buffer(ptr: *mut u8, width: u32, height: u32, from: Coord, to: C
         if e2 <= dx {
             err += dx;
             iy0 += sy;
+        }
+    }
+
+    if min_x <= max_x && min_y <= max_y {
+        Rect {
+            x: min_x,
+            y: min_y,
+            width: max_x - min_x + 1,
+            height: max_y - min_y + 1,
+        }
+    } else {
+        Rect {
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
         }
     }
 }
