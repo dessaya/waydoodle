@@ -18,7 +18,7 @@ use wayland_protocols::wp::tablet::zv2::client::{
 };
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
-use crate::canvas::Canvas;
+use crate::canvas::{Canvas, Color, Tool};
 
 /// Handle to a running Wayland surface that can be toggled on/off.
 ///
@@ -338,10 +338,24 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
             ..
         } = event
         {
-            // KEY_ESC = 1 (Linux evdev keycode), pressed
-            if key == 1 && key_state == wayland_client::WEnum::Value(wl_keyboard::KeyState::Pressed)
-            {
-                state.hide();
+            if key_state != wayland_client::WEnum::Value(wl_keyboard::KeyState::Pressed) {
+                return;
+            }
+            match key {
+                1 => state.hide(),                                     // KEY_ESC
+                19 => state.canvas.set_tool(Tool::Pen(Color::Red)),    // KEY_R
+                34 => state.canvas.set_tool(Tool::Pen(Color::Green)),  // KEY_G
+                48 => state.canvas.set_tool(Tool::Pen(Color::Blue)),   // KEY_B
+                21 => state.canvas.set_tool(Tool::Pen(Color::Yellow)), // KEY_Y
+                18 => state.canvas.set_eraser(),                       // KEY_E
+                46 => {
+                    // KEY_C
+                    if let Some(objs) = state.surface_objects.as_ref() {
+                        let wl_surface = objs.wl_surface.clone();
+                        state.canvas.clear_and_redraw(&wl_surface);
+                    }
+                }
+                _ => {}
             }
         }
     }

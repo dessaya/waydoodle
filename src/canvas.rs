@@ -11,6 +11,47 @@ struct Coord {
     y: f64,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum Color {
+    Red,
+    Green,
+    Blue,
+    Yellow,
+}
+
+impl Color {
+    fn to_argb(self) -> u32 {
+        match self {
+            Color::Red => 0xFF_FF_00_00,
+            Color::Green => 0xFF_00_FF_00,
+            Color::Blue => 0xFF_00_00_FF,
+            Color::Yellow => 0xFF_FF_FF_00,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum Tool {
+    Pen(Color),
+    Eraser,
+}
+
+impl Tool {
+    fn argb(self) -> u32 {
+        match self {
+            Tool::Pen(c) => c.to_argb(),
+            Tool::Eraser => 0x00_00_00_00,
+        }
+    }
+
+    fn radius(self) -> i32 {
+        match self {
+            Tool::Pen(_) => 1,
+            Tool::Eraser => 8,
+        }
+    }
+}
+
 struct InputState {
     pressed: bool,
     pos: Coord,
@@ -36,9 +77,10 @@ pub struct Canvas {
     shm_ptr: SendPtr,
     width: u32,
     height: u32,
-    strokes: Vec<(Coord, Coord)>,
+    strokes: Vec<(Coord, Coord, Tool)>,
     pointer: InputState,
     tablet: InputState,
+    tool: Tool,
 }
 
 impl Canvas {
@@ -50,6 +92,7 @@ impl Canvas {
             strokes: Vec::new(),
             pointer: InputState::new(),
             tablet: InputState::new(),
+            tool: Tool::Pen(Color::Red),
         }
     }
 
@@ -87,8 +130,8 @@ impl Canvas {
         self.height = height;
 
         // Replay existing strokes into the new buffer.
-        for &(from, to) in &self.strokes {
-            draw_line_on_buffer(self.shm_ptr.0, width, height, from, to);
+        for &(from, to, tool) in &self.strokes {
+            draw_line_on_buffer(self.shm_ptr.0, width, height, from, to, tool);
         }
     }
 
@@ -106,20 +149,46 @@ impl Canvas {
         self.reset_input();
     }
 
+    /// Clear strokes and redraw the buffer (fill with transparent), then
+    /// damage + commit the surface so the change is visible immediately.
+    pub fn clear_and_redraw(&mut self, wl_surface: &wl_surface::WlSurface) {
+        self.strokes.clear();
+        self.reset_input();
+        if !self.shm_ptr.0.is_null() {
+            let count = (self.width as usize) * (self.height as usize);
+            let pixels =
+                unsafe { std::slice::from_raw_parts_mut(self.shm_ptr.0 as *mut u32, count) };
+            for pixel in pixels.iter_mut() {
+                *pixel = 0x00_00_00_00;
+            }
+            wl_surface.damage_buffer(0, 0, self.width as i32, self.height as i32);
+            wl_surface.commit();
+        }
+    }
+
     /// Reset transient input state without clearing strokes.
     pub fn reset_input(&mut self) {
         self.pointer.reset();
         self.tablet.reset();
     }
 
+    pub fn set_tool(&mut self, tool: Tool) {
+        self.tool = tool;
+    }
+
+    pub fn set_eraser(&mut self) {
+        self.tool = Tool::Eraser;
+    }
+
     /// Record a line segment, draw it into the pixel buffer, and
     /// damage + commit the surface.
     fn draw_stroke(&mut self, from: Coord, to: Coord, wl_surface: &wl_surface::WlSurface) {
-        self.strokes.push((from, to));
+        let tool = self.tool;
+        self.strokes.push((from, to, tool));
         if self.shm_ptr.0.is_null() {
             return;
         }
-        draw_line_on_buffer(self.shm_ptr.0, self.width, self.height, from, to);
+        draw_line_on_buffer(self.shm_ptr.0, self.width, self.height, from, to, tool);
         wl_surface.damage_buffer(0, 0, self.width as i32, self.height as i32);
         wl_surface.commit();
     }
@@ -193,11 +262,11 @@ impl Drop for Canvas {
     }
 }
 
-fn draw_line_on_buffer(ptr: *mut u8, width: u32, height: u32, from: Coord, to: Coord) {
+fn draw_line_on_buffer(ptr: *mut u8, width: u32, height: u32, from: Coord, to: Coord, tool: Tool) {
     let pixels =
         unsafe { std::slice::from_raw_parts_mut(ptr as *mut u32, (width * height) as usize) };
-    let brush_radius: i32 = 1;
-    let color: u32 = 0xFF_FF_00_00; // opaque red (ARGB8888)
+    let color = tool.argb();
+    let radius = tool.radius();
 
     let mut ix0 = from.x as i64;
     let mut iy0 = from.y as i64;
@@ -211,9 +280,9 @@ fn draw_line_on_buffer(ptr: *mut u8, width: u32, height: u32, from: Coord, to: C
 
     loop {
         // Draw a filled circle at (ix0, iy0).
-        for by in -brush_radius..=brush_radius {
-            for bx in -brush_radius..=brush_radius {
-                if bx * bx + by * by <= brush_radius * brush_radius {
+        for by in -radius..=radius {
+            for bx in -radius..=radius {
+                if bx * bx + by * by <= radius * radius {
                     let px = ix0 as i32 + bx;
                     let py = iy0 as i32 + by;
                     if px >= 0 && px < width as i32 && py >= 0 && py < height as i32 {
