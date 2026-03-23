@@ -5,19 +5,23 @@ use wayland_client::protocol::wl_surface;
 struct SendPtr(*mut u8);
 unsafe impl Send for SendPtr {}
 
-struct InputState {
-    pressed: bool,
+#[derive(Clone, Copy, PartialEq)]
+struct Coord {
     x: f64,
     y: f64,
-    prev: Option<(f64, f64)>,
+}
+
+struct InputState {
+    pressed: bool,
+    pos: Coord,
+    prev: Option<Coord>,
 }
 
 impl InputState {
     fn new() -> Self {
         Self {
             pressed: false,
-            x: 0.0,
-            y: 0.0,
+            pos: Coord { x: 0.0, y: 0.0 },
             prev: None,
         }
     }
@@ -32,7 +36,7 @@ pub struct Canvas {
     shm_ptr: SendPtr,
     width: u32,
     height: u32,
-    strokes: Vec<(f64, f64, f64, f64)>,
+    strokes: Vec<(Coord, Coord)>,
     pointer: InputState,
     tablet: InputState,
 }
@@ -83,8 +87,8 @@ impl Canvas {
         self.height = height;
 
         // Replay existing strokes into the new buffer.
-        for &(x0, y0, x1, y1) in &self.strokes {
-            draw_line_on_buffer(self.shm_ptr.0, width, height, x0, y0, x1, y1);
+        for &(from, to) in &self.strokes {
+            draw_line_on_buffer(self.shm_ptr.0, width, height, from, to);
         }
     }
 
@@ -110,26 +114,18 @@ impl Canvas {
 
     /// Record a line segment, draw it into the pixel buffer, and
     /// damage + commit the surface.
-    pub fn draw_stroke(
-        &mut self,
-        x0: f64,
-        y0: f64,
-        x1: f64,
-        y1: f64,
-        wl_surface: &wl_surface::WlSurface,
-    ) {
-        self.strokes.push((x0, y0, x1, y1));
+    fn draw_stroke(&mut self, from: Coord, to: Coord, wl_surface: &wl_surface::WlSurface) {
+        self.strokes.push((from, to));
         if self.shm_ptr.0.is_null() {
             return;
         }
-        draw_line_on_buffer(self.shm_ptr.0, self.width, self.height, x0, y0, x1, y1);
+        draw_line_on_buffer(self.shm_ptr.0, self.width, self.height, from, to);
         wl_surface.damage_buffer(0, 0, self.width as i32, self.height as i32);
         wl_surface.commit();
     }
 
     pub fn pointer_enter(&mut self, x: f64, y: f64) {
-        self.pointer.x = x;
-        self.pointer.y = y;
+        self.pointer.pos = Coord { x, y };
     }
 
     pub fn pointer_leave(&mut self) {
@@ -137,14 +133,13 @@ impl Canvas {
     }
 
     pub fn pointer_motion(&mut self, x: f64, y: f64) {
-        self.pointer.x = x;
-        self.pointer.y = y;
+        self.pointer.pos = Coord { x, y };
     }
 
     pub fn pointer_button(&mut self, pressed: bool) {
         self.pointer.pressed = pressed;
         if pressed {
-            self.pointer.prev = Some((self.pointer.x, self.pointer.y));
+            self.pointer.prev = Some(self.pointer.pos);
         } else {
             self.pointer.prev = None;
         }
@@ -152,12 +147,13 @@ impl Canvas {
 
     pub fn pointer_frame(&mut self, wl_surface: &wl_surface::WlSurface) {
         if self.pointer.pressed {
-            let x = self.pointer.x;
-            let y = self.pointer.y;
-            if let Some((px, py)) = self.pointer.prev {
-                self.draw_stroke(px, py, x, y, wl_surface);
+            let pos = self.pointer.pos;
+            if let Some(prev) = self.pointer.prev
+                && prev != pos
+            {
+                self.draw_stroke(prev, pos, wl_surface);
             }
-            self.pointer.prev = Some((x, y));
+            self.pointer.prev = Some(pos);
         }
     }
 
@@ -167,7 +163,7 @@ impl Canvas {
 
     pub fn tablet_down(&mut self) {
         self.tablet.pressed = true;
-        self.tablet.prev = Some((self.tablet.x, self.tablet.y));
+        self.tablet.prev = Some(self.tablet.pos);
     }
 
     pub fn tablet_up(&mut self) {
@@ -175,18 +171,18 @@ impl Canvas {
     }
 
     pub fn tablet_motion(&mut self, x: f64, y: f64) {
-        self.tablet.x = x;
-        self.tablet.y = y;
+        self.tablet.pos = Coord { x, y };
     }
 
     pub fn tablet_frame(&mut self, wl_surface: &wl_surface::WlSurface) {
         if self.tablet.pressed {
-            let x = self.tablet.x;
-            let y = self.tablet.y;
-            if let Some((px, py)) = self.tablet.prev {
-                self.draw_stroke(px, py, x, y, wl_surface);
+            let pos = self.tablet.pos;
+            if let Some(prev) = self.tablet.prev
+                && prev != pos
+            {
+                self.draw_stroke(prev, pos, wl_surface);
             }
-            self.tablet.prev = Some((x, y));
+            self.tablet.prev = Some(pos);
         }
     }
 }
@@ -197,16 +193,16 @@ impl Drop for Canvas {
     }
 }
 
-fn draw_line_on_buffer(ptr: *mut u8, width: u32, height: u32, x0: f64, y0: f64, x1: f64, y1: f64) {
+fn draw_line_on_buffer(ptr: *mut u8, width: u32, height: u32, from: Coord, to: Coord) {
     let pixels =
         unsafe { std::slice::from_raw_parts_mut(ptr as *mut u32, (width * height) as usize) };
     let brush_radius: i32 = 1;
     let color: u32 = 0xFF_FF_00_00; // opaque red (ARGB8888)
 
-    let mut ix0 = x0 as i64;
-    let mut iy0 = y0 as i64;
-    let ix1 = x1 as i64;
-    let iy1 = y1 as i64;
+    let mut ix0 = from.x as i64;
+    let mut iy0 = from.y as i64;
+    let ix1 = to.x as i64;
+    let iy1 = to.y as i64;
     let dx = (ix1 - ix0).abs();
     let dy = -(iy1 - iy0).abs();
     let sx: i64 = if ix0 < ix1 { 1 } else { -1 };
