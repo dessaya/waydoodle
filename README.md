@@ -16,7 +16,7 @@ In the future I may consider adding more features like undo, more drawing tools
 and showing a toolbar, but for now the current set of features is sufficient for
 my needs (annotating on the screen during presentations).
 
-= Global shortcut
+== Global shortcut
 
 The XDG Global Shortcuts protocol is not yet widely supported by Wayland
 compositors, so Waydoodle falls back to listening for the SIGUSR1 signal to
@@ -28,3 +28,7 @@ of choice that executes the following command:
 ```
 pkill -SIGUSR1 waydoodle
 ```
+
+== License
+
+MIT. See [LICENSE](LICENSE) for more details.
