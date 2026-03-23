@@ -1,6 +1,7 @@
 use std::os::unix::io::{AsFd, AsRawFd, FromRawFd, OwnedFd};
 use std::sync::Arc;
 
+use wayland_client::event_created_child;
 use wayland_client::{
     Connection, Dispatch, EventQueue, QueueHandle, delegate_noop,
     globals::{GlobalList, GlobalListContents, registry_queue_init},
@@ -10,6 +11,11 @@ use wayland_client::{
     },
 };
 use wayland_cursor::CursorTheme;
+use wayland_protocols::wp::tablet::zv2::client::{
+    zwp_tablet_manager_v2, zwp_tablet_pad_dial_v2, zwp_tablet_pad_group_v2, zwp_tablet_pad_ring_v2,
+    zwp_tablet_pad_strip_v2, zwp_tablet_pad_v2, zwp_tablet_seat_v2, zwp_tablet_tool_v2,
+    zwp_tablet_v2,
+};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
 /// Handle to a running Wayland surface that can be toggled on/off.
@@ -45,18 +51,25 @@ impl SurfaceHandle {
         let wm_base: xdg_wm_base::XdgWmBase = globals
             .bind(&qh, 2..=6, ())
             .expect("xdg_wm_base not available");
-        let _seat: wl_seat::WlSeat = globals.bind(&qh, 1..=9, ()).expect("wl_seat not available");
+        let seat: wl_seat::WlSeat = globals.bind(&qh, 1..=9, ()).expect("wl_seat not available");
 
         let cursor_theme =
             CursorTheme::load(&conn, shm.clone(), 24).expect("failed to load cursor theme");
-        let cursor_surface = compositor.create_surface(&qh, ());
+        let pointer_cursor_surface = compositor.create_surface(&qh, ());
+        let tablet_cursor_surface = compositor.create_surface(&qh, ());
+
+        let tablet_manager = globals
+            .bind::<zwp_tablet_manager_v2::ZwpTabletManagerV2, _, _>(&qh, 1..=1, ())
+            .expect("zwp_tablet_manager_v2 not available");
+        let _tablet_seat = tablet_manager.get_tablet_seat(&seat, &qh, ());
 
         let mut state = State::new();
         state.compositor = Some(compositor);
         state.shm = Some(shm);
         state.wm_base = Some(wm_base);
         state.cursor_theme = Some(cursor_theme);
-        state.cursor_surface = Some(cursor_surface);
+        state.pointer_cursor_surface = Some(pointer_cursor_surface);
+        state.tablet_cursor_surface = Some(tablet_cursor_surface);
 
         std::thread::Builder::new()
             .name("wayland-surface".into())
@@ -86,7 +99,8 @@ struct State {
     wm_base: Option<xdg_wm_base::XdgWmBase>,
     pointer: Option<wl_pointer::WlPointer>,
     cursor_theme: Option<CursorTheme>,
-    cursor_surface: Option<wl_surface::WlSurface>,
+    pointer_cursor_surface: Option<wl_surface::WlSurface>,
+    tablet_cursor_surface: Option<wl_surface::WlSurface>,
     // Active surface objects (None when hidden)
     surface_objects: Option<SurfaceObjects>,
     // We only track width/height so we can create a correctly sized buffer
@@ -112,7 +126,8 @@ impl State {
             wm_base: None,
             pointer: None,
             cursor_theme: None,
-            cursor_surface: None,
+            pointer_cursor_surface: None,
+            tablet_cursor_surface: None,
             surface_objects: None,
             configured: false,
             width: 0,
@@ -235,6 +250,24 @@ impl State {
         objs.buffer = Some(buffer);
         objs.pool = Some(pool);
     }
+
+    /// Load the crosshair cursor from the theme and attach it to the shared
+    /// cursor surface, then invoke `set_cursor` with the surface and hotspot.
+    fn set_crosshair_cursor(
+        &mut self,
+        cursor_surface: &wl_surface::WlSurface,
+        set_cursor: impl FnOnce(&wl_surface::WlSurface, i32, i32),
+    ) {
+        if let Some(theme) = self.cursor_theme.as_mut() {
+            if let Some(cursor) = theme.get_cursor("crosshair") {
+                let image = &cursor[0];
+                let (hotspot_x, hotspot_y) = image.hotspot();
+                cursor_surface.attach(Some(&image), 0, 0);
+                cursor_surface.commit();
+                set_cursor(cursor_surface, hotspot_x as i32, hotspot_y as i32);
+            }
+        }
+    }
 }
 
 fn create_shm_file(size: usize) -> std::fs::File {
@@ -267,6 +300,125 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
         _qh: &QueueHandle<Self>,
     ) {
         // Handled by GlobalList internally.
+    }
+}
+
+// wl_seat — track pointer capability and bind if available.
+impl Dispatch<wl_seat::WlSeat, ()> for State {
+    fn event(
+        state: &mut Self,
+        seat: &wl_seat::WlSeat,
+        event: wl_seat::Event,
+        _data: &(),
+        _conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        if let wl_seat::Event::Capabilities {
+            capabilities: cap_flags,
+        } = event
+        {
+            let has_pointer = cap_flags
+                .into_result()
+                .map(|c| c.contains(wl_seat::Capability::Pointer))
+                .unwrap_or(false);
+
+            if has_pointer && state.pointer.is_none() {
+                state.pointer = Some(seat.get_pointer(qh, ()));
+            }
+        }
+    }
+}
+
+// wl_pointer — set crosshair cursor on pointer enter.
+impl Dispatch<wl_pointer::WlPointer, ()> for State {
+    fn event(
+        state: &mut Self,
+        pointer: &wl_pointer::WlPointer,
+        event: wl_pointer::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        if let wl_pointer::Event::Enter {
+            serial,
+            surface: _,
+            surface_x: _,
+            surface_y: _,
+        } = event
+        {
+            if let Some(cursor_surface) = state.pointer_cursor_surface.clone() {
+                let pointer = pointer.clone();
+                state.set_crosshair_cursor(&cursor_surface, |surface, hx, hy| {
+                    pointer.set_cursor(serial, Some(surface), hx, hy);
+                });
+            }
+        }
+    }
+}
+
+delegate_noop!(State: ignore zwp_tablet_manager_v2::ZwpTabletManagerV2);
+delegate_noop!(State: ignore zwp_tablet_v2::ZwpTabletV2);
+
+impl Dispatch<zwp_tablet_pad_v2::ZwpTabletPadV2, ()> for State {
+    event_created_child!(State, zwp_tablet_pad_v2::ZwpTabletPadV2, [
+        zwp_tablet_pad_v2::EVT_GROUP_OPCODE => (zwp_tablet_pad_group_v2::ZwpTabletPadGroupV2, Default::default()),
+    ]);
+    fn event(
+        _: &mut State,
+        _: &zwp_tablet_pad_v2::ZwpTabletPadV2,
+        _: <zwp_tablet_pad_v2::ZwpTabletPadV2 as wayland_client::Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<State>,
+    ) {
+    }
+}
+
+delegate_noop!(State: ignore zwp_tablet_pad_group_v2::ZwpTabletPadGroupV2);
+delegate_noop!(State: ignore zwp_tablet_pad_ring_v2::ZwpTabletPadRingV2);
+delegate_noop!(State: ignore zwp_tablet_pad_strip_v2::ZwpTabletPadStripV2);
+delegate_noop!(State: ignore zwp_tablet_pad_dial_v2::ZwpTabletPadDialV2);
+
+impl Dispatch<zwp_tablet_seat_v2::ZwpTabletSeatV2, ()> for State {
+    event_created_child!(State, zwp_tablet_seat_v2::ZwpTabletSeatV2, [
+        zwp_tablet_seat_v2::EVT_TABLET_ADDED_OPCODE => (zwp_tablet_v2::ZwpTabletV2, Default::default()),
+        zwp_tablet_seat_v2::EVT_TOOL_ADDED_OPCODE => (zwp_tablet_tool_v2::ZwpTabletToolV2, Default::default()),
+        zwp_tablet_seat_v2::EVT_PAD_ADDED_OPCODE => (zwp_tablet_pad_v2::ZwpTabletPadV2, Default::default())
+    ]);
+    fn event(
+        _state: &mut Self,
+        _proxy: &zwp_tablet_seat_v2::ZwpTabletSeatV2,
+        _event: <zwp_tablet_seat_v2::ZwpTabletSeatV2 as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+// zwp_tablet_tool_v2 — set crosshair cursor on proximity-in.
+impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for State {
+    fn event(
+        state: &mut Self,
+        tool: &zwp_tablet_tool_v2::ZwpTabletToolV2,
+        event: zwp_tablet_tool_v2::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        if let zwp_tablet_tool_v2::Event::ProximityIn {
+            serial,
+            tablet: _,
+            surface: _,
+        } = event
+        {
+            if let Some(cursor_surface) = state.tablet_cursor_surface.clone() {
+                let tool = tool.clone();
+                state.set_crosshair_cursor(&cursor_surface, |surface, hx, hy| {
+                    tool.set_cursor(serial, Some(surface), hx, hy);
+                });
+            }
+        }
     }
 }
 
@@ -333,69 +485,6 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
                 state.hide();
             }
             _ => {}
-        }
-    }
-}
-
-// wl_seat — track pointer capability and bind if available.
-impl Dispatch<wl_seat::WlSeat, ()> for State {
-    fn event(
-        state: &mut Self,
-        seat: &wl_seat::WlSeat,
-        event: wl_seat::Event,
-        _data: &(),
-        _conn: &Connection,
-        qh: &QueueHandle<Self>,
-    ) {
-        if let wl_seat::Event::Capabilities {
-            capabilities: cap_flags,
-        } = event
-        {
-            let has_pointer = cap_flags
-                .into_result()
-                .map(|c| c.contains(wl_seat::Capability::Pointer))
-                .unwrap_or(false);
-
-            if has_pointer && state.pointer.is_none() {
-                state.pointer = Some(seat.get_pointer(qh, ()));
-            }
-        }
-    }
-}
-
-// wl_pointer — set cursor on pointer enter.
-impl Dispatch<wl_pointer::WlPointer, ()> for State {
-    fn event(
-        state: &mut Self,
-        pointer: &wl_pointer::WlPointer,
-        event: wl_pointer::Event,
-        _data: &(),
-        _conn: &Connection,
-        _qh: &QueueHandle<Self>,
-    ) {
-        if let wl_pointer::Event::Enter {
-            serial,
-            surface: _,
-            surface_x: _,
-            surface_y: _,
-        } = event
-        {
-            if let (Some(theme), Some(cursor_surface)) =
-                (state.cursor_theme.as_mut(), state.cursor_surface.as_ref())
-            {
-                if let Some(cursor) = theme.get_cursor("crosshair") {
-                    let image = &cursor[0];
-                    let (hotspot_x, hotspot_y) = image.hotspot();
-                    cursor_surface.attach(Some(&image), 0, 0);
-                    cursor_surface.commit();
-                    pointer.set_cursor(
-                        serial,
-                        Some(cursor_surface),
-                        hotspot_x as i32,
-                        hotspot_y as i32,
-                    );
-                }
-            }
         }
     }
 }
