@@ -4,3 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+ksni = { version = "0.3", default-features = false, features = ["async-io"] }
+macro_rules_attribute = "0.2"
+smol = "2"
+smol-macros = "0.1"
