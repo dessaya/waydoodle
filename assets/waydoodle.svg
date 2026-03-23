@@ -1,0 +1,28 @@
+<svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 256 256"
+    width="256"
+    height="256"
+>
+  <!-- Monitor body -->
+  <rect x="28" y="28" width="200" height="150" rx="12" ry="12" fill="#2B2B2B" />
+
+  <!-- Screen -->
+  <rect x="40" y="40" width="176" height="126" rx="4" ry="4" fill="#1A1A2E" />
+
+  <!-- Stand neck -->
+  <rect x="112" y="178" width="32" height="24" fill="#2B2B2B" />
+
+  <!-- Stand base -->
+  <rect x="80" y="200" width="96" height="12" rx="6" ry="6" fill="#2B2B2B" />
+
+  <!-- Red squiggly line on screen -->
+  <path
+        d="M 58 120 C 70 80, 100 70, 90 110 C 80 150, 110 140, 120 100 C 130 60, 160 65, 145 105 C 130 145, 165 150, 175 100 C 185 50, 210 75, 200 110"
+        fill="none"
+        stroke="#FF0000"
+        stroke-width="6"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+    />
+</svg>

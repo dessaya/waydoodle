@@ -1,34 +1,78 @@
-= Waydoodle
+# Waydoodle
 
-This is a minimalistic application that allows the user to annotate on the
-screen (e.g. for presentations) on any Wayland compositor. Unlike other similar
-tools like [Gromit-MPX](https://github.com/bk138/gromit-mpx) or
-[Wayscriber](https://wayscriber.com/), Waydoodle provides only basic features:
+A minimalistic Wayland screen annotation tool. Draw on your screen during
+presentations, demos, or video calls — on any Wayland compositor.
 
-[x] Tray icon with menu
-[x] Global shortcut (see below)
-[x] Draw with the mouse or tablet
-[x] Change color (r, g, b, y)
-[x] Erase (e)
-[x] Clear (c)
+Unlike other similar tools like [Gromit-MPX](https://github.com/bk138/gromit-mpx)
+or [Wayscriber](https://wayscriber.com/), Waydoodle provides only the essentials:
 
-In the future I may consider adding more features like undo, more drawing tools
-and showing a toolbar, but for now the current set of features is sufficient for
-my needs (annotating on the screen during presentations).
+- Tray icon with menu
+- Global shortcut (see [below](#global-shortcut))
+- Draw with the mouse or tablet
+- Change color (<kbd>r</kbd>, <kbd>g</kbd>, <kbd>b</kbd>, <kbd>y</kbd>)
+- Erase (<kbd>e</kbd>)
+- Clear (<kbd>c</kbd>)
 
-== Global shortcut
+## Installation
 
-The XDG Global Shortcuts protocol is not yet widely supported by Wayland
-compositors, so Waydoodle falls back to listening for the SIGUSR1 signal to
-toggle the drawing mode on and off.
+### From source
 
-You can register a global shortcut on your desktop environment or window manager
-of choice that executes the following command:
+Make sure you have a [Rust toolchain](https://rustup.rs/) installed, then:
+
+```
+git clone https://github.com/dessaya/waydoodle.git
+cd waydoodle
+cargo install --path .
+```
+
+### Arch Linux (AUR)
+
+Install the [`waydoodle-git`](https://aur.archlinux.org/packages/waydoodle-git)
+package with your preferred AUR helper:
+
+```
+paru -S waydoodle-git
+```
+
+## Usage
+
+Launch Waydoodle from your application menu or from a terminal:
+
+```
+waydoodle
+```
+
+A tray icon will appear. Send `SIGUSR1` to toggle the annotation overlay
+on and off:
 
 ```
 pkill -SIGUSR1 waydoodle
 ```
 
-== License
+While the overlay is visible:
 
-MIT. See [LICENSE](LICENSE) for more details.
+| Key | Action |
+|-----|--------|
+| <kbd>r</kbd> | Red pen |
+| <kbd>g</kbd> | Green pen |
+| <kbd>b</kbd> | Blue pen |
+| <kbd>y</kbd> | Yellow pen |
+| <kbd>e</kbd> | Eraser |
+| <kbd>c</kbd> | Clear all |
+
+## Global shortcut
+
+The XDG Global Shortcuts protocol is not yet widely supported by Wayland
+compositors, so Waydoodle falls back to listening for the `SIGUSR1` signal to
+toggle the drawing mode on and off.
+
+Register a global shortcut in your desktop environment or window manager of
+choice that executes:
+
+```
+pkill -SIGUSR1 waydoodle
+```
+
+## License
+
+MIT. See [LICENSE](LICENSE) for details.

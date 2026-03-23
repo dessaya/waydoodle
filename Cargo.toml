@@ -2,6 +2,12 @@
 name = "waydoodle"
 version = "0.1.0"
 edition = "2024"
+description = "A minimalistic screen annotation tool for Wayland"
+license = "MIT"
+repository = "https://github.com/dessaya/waydoodle"
+authors = ["Diego Essaya"]
+keywords = ["wayland", "annotation", "drawing", "presentation"]
+categories = ["graphics"]
 
 [dependencies]
 async-channel = "2"

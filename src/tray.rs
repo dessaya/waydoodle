@@ -11,7 +11,7 @@ impl ksni::Tray for MyTray {
         env!("CARGO_PKG_NAME").into()
     }
     fn icon_name(&self) -> String {
-        "input-tablet".into()
+        "waydoodle".into()
     }
     fn title(&self) -> String {
         "Waydoodle".into()

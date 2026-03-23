@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Waydoodle
+Comment=Annotate on the screen
+Exec=waydoodle
+Icon=waydoodle
+Terminal=false
+Type=Application
+Categories=Utility;Graphics;
+Keywords=annotation;drawing;presentation;wayland;
