@@ -8,11 +8,11 @@ tools like [Gromit-MPX](https://github.com/bk138/gromit-mpx) or
 [x] Tray icon with menu
 [x] Global shortcut (see below)
 [x] Draw with the mouse or tablet
-[ ] Change color
-[ ] Erase
-[ ] Undo
+[x] Change color (r, g, b, y)
+[x] Erase (e)
+[x] Clear (c)
 
-In the future I may consider adding more features like different drawing tools
+In the future I may consider adding more features like undo, more drawing tools
 and showing a toolbar, but for now the current set of features is sufficient for
 my needs (annotating on the screen during presentations).
 

@@ -47,7 +47,7 @@ impl Tool {
     fn radius(self) -> i32 {
         match self {
             Tool::Pen(_) => 1,
-            Tool::Eraser => 8,
+            Tool::Eraser => 10,
         }
     }
 }
@@ -170,6 +170,10 @@ impl Canvas {
     pub fn reset_input(&mut self) {
         self.pointer.reset();
         self.tablet.reset();
+    }
+
+    pub fn tool(&self) -> Tool {
+        self.tool
     }
 
     pub fn set_tool(&mut self, tool: Tool) {

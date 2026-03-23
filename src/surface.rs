@@ -10,7 +10,6 @@ use wayland_client::{
         wl_seat, wl_shm, wl_shm_pool, wl_surface,
     },
 };
-use wayland_cursor::CursorTheme;
 use wayland_protocols::wp::tablet::zv2::client::{
     zwp_tablet_manager_v2, zwp_tablet_pad_dial_v2, zwp_tablet_pad_group_v2, zwp_tablet_pad_ring_v2,
     zwp_tablet_pad_strip_v2, zwp_tablet_pad_v2, zwp_tablet_seat_v2, zwp_tablet_tool_v2,
@@ -19,6 +18,7 @@ use wayland_protocols::wp::tablet::zv2::client::{
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
 use crate::canvas::{Canvas, Color, Tool};
+use crate::cursor::CursorManager;
 
 /// Handle to a running Wayland surface that can be toggled on/off.
 ///
@@ -55,24 +55,23 @@ impl SurfaceHandle {
             .expect("xdg_wm_base not available");
         let seat: wl_seat::WlSeat = globals.bind(&qh, 1..=9, ()).expect("wl_seat not available");
 
-        let cursor_theme =
-            CursorTheme::load(&conn, shm.clone(), 24).expect("failed to load cursor theme");
         let pointer_cursor_surface = compositor.create_surface(&qh, ());
         let tablet_cursor_surface = compositor.create_surface(&qh, ());
+
+        let cursors = CursorManager::new(
+            &conn,
+            &shm,
+            pointer_cursor_surface,
+            tablet_cursor_surface,
+            &qh,
+        );
 
         let tablet_manager = globals
             .bind::<zwp_tablet_manager_v2::ZwpTabletManagerV2, _, _>(&qh, 1..=1, ())
             .expect("zwp_tablet_manager_v2 not available");
         let _tablet_seat = tablet_manager.get_tablet_seat(&seat, &qh, ());
 
-        let state = State::new(
-            compositor,
-            shm,
-            wm_base,
-            cursor_theme,
-            pointer_cursor_surface,
-            tablet_cursor_surface,
-        );
+        let state = State::new(compositor, shm, wm_base, cursors);
 
         std::thread::Builder::new()
             .name("wayland-surface".into())
@@ -105,11 +104,8 @@ struct State {
     compositor: wl_compositor::WlCompositor,
     shm: wl_shm::WlShm,
     wm_base: xdg_wm_base::XdgWmBase,
-    pointer: Option<wl_pointer::WlPointer>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
-    cursor_theme: CursorTheme,
-    pointer_cursor_surface: wl_surface::WlSurface,
-    tablet_cursor_surface: wl_surface::WlSurface,
+    cursors: CursorManager,
     // Active surface objects (None when hidden)
     surface_objects: Option<SurfaceObjects>,
     configured: ConfigureState,
@@ -129,19 +125,14 @@ impl State {
         compositor: wl_compositor::WlCompositor,
         shm: wl_shm::WlShm,
         wm_base: xdg_wm_base::XdgWmBase,
-        cursor_theme: CursorTheme,
-        pointer_cursor_surface: wl_surface::WlSurface,
-        tablet_cursor_surface: wl_surface::WlSurface,
+        cursors: CursorManager,
     ) -> Self {
         Self {
             compositor,
             shm,
             wm_base,
-            pointer: None,
             keyboard: None,
-            cursor_theme,
-            pointer_cursor_surface,
-            tablet_cursor_surface,
+            cursors,
             surface_objects: None,
             configured: ConfigureState::Unconfigured,
             canvas: Canvas::new(),
@@ -238,22 +229,6 @@ impl State {
         objs.buffer = Some(buffer);
         objs.pool = Some(pool);
     }
-
-    /// Load the crosshair cursor from the theme and attach it to the shared
-    /// cursor surface, then invoke `set_cursor` with the surface and hotspot.
-    fn set_crosshair_cursor(
-        &mut self,
-        cursor_surface: &wl_surface::WlSurface,
-        set_cursor: impl FnOnce(&wl_surface::WlSurface, i32, i32),
-    ) {
-        if let Some(cursor) = self.cursor_theme.get_cursor("crosshair") {
-            let image = &cursor[0];
-            let (hotspot_x, hotspot_y) = image.hotspot();
-            cursor_surface.attach(Some(&image), 0, 0);
-            cursor_surface.commit();
-            set_cursor(cursor_surface, hotspot_x as i32, hotspot_y as i32);
-        }
-    }
 }
 
 fn create_shm_file(size: usize) -> std::fs::File {
@@ -308,8 +283,9 @@ impl Dispatch<wl_seat::WlSeat, ()> for State {
             let has_pointer = caps
                 .map(|c| c.contains(wl_seat::Capability::Pointer))
                 .unwrap_or(false);
-            if has_pointer && state.pointer.is_none() {
-                state.pointer = Some(seat.get_pointer(qh, ()));
+            if has_pointer && !state.cursors.has_pointer() {
+                let pointer = seat.get_pointer(qh, ());
+                state.cursors.set_pointer(pointer);
             }
 
             let has_keyboard = caps
@@ -356,6 +332,8 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
                 }
                 _ => {}
             }
+            // Update cursor shape after tool change.
+            state.cursors.refresh(state.canvas.tool());
         }
     }
 }
@@ -378,11 +356,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                 surface_y,
             } => {
                 state.canvas.pointer_enter(surface_x, surface_y);
-                let cursor_surface = state.pointer_cursor_surface.clone();
-                let pointer = pointer.clone();
-                state.set_crosshair_cursor(&cursor_surface, |surface, hx, hy| {
-                    pointer.set_cursor(serial, Some(surface), hx, hy);
-                });
+                state
+                    .cursors
+                    .pointer_enter(serial, pointer, state.canvas.tool());
             }
             wl_pointer::Event::Leave { .. } => {
                 state.canvas.pointer_leave();
@@ -473,11 +449,9 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for State {
                 tablet: _,
                 surface: _,
             } => {
-                let cursor_surface = state.tablet_cursor_surface.clone();
-                let tool = tool.clone();
-                state.set_crosshair_cursor(&cursor_surface, |surface, hx, hy| {
-                    tool.set_cursor(serial, Some(surface), hx, hy);
-                });
+                state
+                    .cursors
+                    .tablet_proximity_in(serial, tool, state.canvas.tool());
             }
             zwp_tablet_tool_v2::Event::ProximityOut => {
                 state.canvas.tablet_proximity_out();

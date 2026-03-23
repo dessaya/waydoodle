@@ -1,12 +1,10 @@
 mod canvas;
+mod cursor;
 mod global_shortcut;
 mod surface;
 mod tray;
-
-use async_channel;
 use macro_rules_attribute::apply;
 use smol_macros::main;
-
 use surface::SurfaceHandle;
 
 #[apply(main!)]
