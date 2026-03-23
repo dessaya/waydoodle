@@ -1,7 +1,7 @@
 # Waydoodle
 
-This is a Wayland application implemented in Rust that allows the user to draw
-on the screen (e.g. for presentations).
+This is a Wayland application implemented in Rust that allows the user to
+annotate on the screen (e.g. for presentations).
 
 ## Conventions
 

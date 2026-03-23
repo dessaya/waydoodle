@@ -95,6 +95,12 @@ impl SurfaceHandle {
     }
 }
 
+enum ConfigureState {
+    Unconfigured,
+    NeedsBuffer { width: u32, height: u32 },
+    Configured,
+}
+
 struct State {
     compositor: wl_compositor::WlCompositor,
     shm: wl_shm::WlShm,
@@ -106,10 +112,7 @@ struct State {
     tablet_cursor_surface: wl_surface::WlSurface,
     // Active surface objects (None when hidden)
     surface_objects: Option<SurfaceObjects>,
-    // We only track width/height so we can create a correctly sized buffer
-    configured: bool,
-    width: u32,
-    height: u32,
+    configured: ConfigureState,
     canvas: Canvas,
 }
 
@@ -140,9 +143,7 @@ impl State {
             pointer_cursor_surface,
             tablet_cursor_surface,
             surface_objects: None,
-            configured: false,
-            width: 0,
-            height: 0,
+            configured: ConfigureState::Unconfigured,
             canvas: Canvas::new(),
         }
     }
@@ -169,7 +170,7 @@ impl State {
         // Commit to trigger the initial configure.
         wl_surface.commit();
 
-        self.configured = false;
+        self.configured = ConfigureState::Unconfigured;
         self.canvas.clear();
         self.surface_objects = Some(SurfaceObjects {
             wl_surface,
@@ -194,18 +195,16 @@ impl State {
             objs.xdg_toplevel.destroy();
             objs.xdg_surface.destroy();
             objs.wl_surface.destroy();
-            self.configured = false;
+            self.configured = ConfigureState::Unconfigured;
         }
     }
 
-    fn attach_buffer(&mut self, qh: &QueueHandle<Self>) {
+    fn attach_buffer(&mut self, qh: &QueueHandle<Self>, width: u32, height: u32) {
         let objs = match self.surface_objects.as_mut() {
             Some(o) => o,
             None => return,
         };
 
-        let width = if self.width > 0 { self.width } else { 100 };
-        let height = if self.height > 0 { self.height } else { 100 };
         let stride = width * 4;
         let size = (stride * height) as usize;
 
@@ -531,9 +530,9 @@ impl Dispatch<xdg_surface::XdgSurface, ()> for State {
     ) {
         if let xdg_surface::Event::Configure { serial } = event {
             proxy.ack_configure(serial);
-            if !state.configured {
-                state.configured = true;
-                state.attach_buffer(qh);
+            if let ConfigureState::NeedsBuffer { width, height } = state.configured {
+                state.attach_buffer(qh, width, height);
+                state.configured = ConfigureState::Configured;
             }
         }
     }
@@ -556,10 +555,11 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
                 states: _,
             } => {
                 if width > 0 && height > 0 {
-                    state.width = width as u32;
-                    state.height = height as u32;
                     // Mark as needing a new buffer on the next xdg_surface configure.
-                    state.configured = false;
+                    state.configured = ConfigureState::NeedsBuffer {
+                        width: width as u32,
+                        height: height as u32,
+                    }
                 }
             }
             xdg_toplevel::Event::Close => {
