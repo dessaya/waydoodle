@@ -127,6 +127,7 @@ impl State {
 
         xdg_toplevel.set_title("Waydoodle".into());
         xdg_toplevel.set_app_id("waydoodle".into());
+        xdg_toplevel.set_maximized();
 
         // Commit to trigger the initial configure.
         wl_surface.commit();
