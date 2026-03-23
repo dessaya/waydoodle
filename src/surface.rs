@@ -5,10 +5,11 @@ use wayland_client::{
     Connection, Dispatch, EventQueue, QueueHandle, delegate_noop,
     globals::{GlobalList, GlobalListContents, registry_queue_init},
     protocol::{
-        wl_buffer, wl_callback, wl_compositor, wl_output, wl_registry, wl_seat, wl_shm,
+        wl_buffer, wl_callback, wl_compositor, wl_output, wl_pointer, wl_registry, wl_seat, wl_shm,
         wl_shm_pool, wl_surface,
     },
 };
+use wayland_cursor::CursorTheme;
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
 /// Handle to a running Wayland surface that can be toggled on/off.
@@ -44,11 +45,18 @@ impl SurfaceHandle {
         let wm_base: xdg_wm_base::XdgWmBase = globals
             .bind(&qh, 2..=6, ())
             .expect("xdg_wm_base not available");
+        let _seat: wl_seat::WlSeat = globals.bind(&qh, 1..=9, ()).expect("wl_seat not available");
+
+        let cursor_theme =
+            CursorTheme::load(&conn, shm.clone(), 24).expect("failed to load cursor theme");
+        let cursor_surface = compositor.create_surface(&qh, ());
 
         let mut state = State::new();
         state.compositor = Some(compositor);
         state.shm = Some(shm);
         state.wm_base = Some(wm_base);
+        state.cursor_theme = Some(cursor_theme);
+        state.cursor_surface = Some(cursor_surface);
 
         std::thread::Builder::new()
             .name("wayland-surface".into())
@@ -76,6 +84,9 @@ struct State {
     compositor: Option<wl_compositor::WlCompositor>,
     shm: Option<wl_shm::WlShm>,
     wm_base: Option<xdg_wm_base::XdgWmBase>,
+    pointer: Option<wl_pointer::WlPointer>,
+    cursor_theme: Option<CursorTheme>,
+    cursor_surface: Option<wl_surface::WlSurface>,
     // Active surface objects (None when hidden)
     surface_objects: Option<SurfaceObjects>,
     // We only track width/height so we can create a correctly sized buffer
@@ -99,6 +110,9 @@ impl State {
             compositor: None,
             shm: None,
             wm_base: None,
+            pointer: None,
+            cursor_theme: None,
+            cursor_surface: None,
             surface_objects: None,
             configured: false,
             width: 0,
@@ -234,6 +248,15 @@ fn create_shm_file(size: usize) -> std::fs::File {
     file
 }
 
+delegate_noop!(State: ignore wl_compositor::WlCompositor);
+delegate_noop!(State: ignore wl_shm::WlShm);
+delegate_noop!(State: ignore wl_shm_pool::WlShmPool);
+delegate_noop!(State: ignore wl_surface::WlSurface);
+delegate_noop!(State: ignore wl_buffer::WlBuffer);
+delegate_noop!(State: ignore wl_callback::WlCallback);
+delegate_noop!(State: ignore wl_output::WlOutput);
+
+// wl_registry — handled by GlobalList internally, but we still need to provide an impl.
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
     fn event(
         _state: &mut Self,
@@ -246,15 +269,6 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
         // Handled by GlobalList internally.
     }
 }
-
-delegate_noop!(State: ignore wl_compositor::WlCompositor);
-delegate_noop!(State: ignore wl_shm::WlShm);
-delegate_noop!(State: ignore wl_shm_pool::WlShmPool);
-delegate_noop!(State: ignore wl_surface::WlSurface);
-delegate_noop!(State: ignore wl_buffer::WlBuffer);
-delegate_noop!(State: ignore wl_callback::WlCallback);
-delegate_noop!(State: ignore wl_output::WlOutput);
-delegate_noop!(State: ignore wl_seat::WlSeat);
 
 // xdg_wm_base — must reply to ping.
 impl Dispatch<xdg_wm_base::XdgWmBase, ()> for State {
@@ -319,6 +333,69 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
                 state.hide();
             }
             _ => {}
+        }
+    }
+}
+
+// wl_seat — track pointer capability and bind if available.
+impl Dispatch<wl_seat::WlSeat, ()> for State {
+    fn event(
+        state: &mut Self,
+        seat: &wl_seat::WlSeat,
+        event: wl_seat::Event,
+        _data: &(),
+        _conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        if let wl_seat::Event::Capabilities {
+            capabilities: cap_flags,
+        } = event
+        {
+            let has_pointer = cap_flags
+                .into_result()
+                .map(|c| c.contains(wl_seat::Capability::Pointer))
+                .unwrap_or(false);
+
+            if has_pointer && state.pointer.is_none() {
+                state.pointer = Some(seat.get_pointer(qh, ()));
+            }
+        }
+    }
+}
+
+// wl_pointer — set cursor on pointer enter.
+impl Dispatch<wl_pointer::WlPointer, ()> for State {
+    fn event(
+        state: &mut Self,
+        pointer: &wl_pointer::WlPointer,
+        event: wl_pointer::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        if let wl_pointer::Event::Enter {
+            serial,
+            surface: _,
+            surface_x: _,
+            surface_y: _,
+        } = event
+        {
+            if let (Some(theme), Some(cursor_surface)) =
+                (state.cursor_theme.as_mut(), state.cursor_surface.as_ref())
+            {
+                if let Some(cursor) = theme.get_cursor("crosshair") {
+                    let image = &cursor[0];
+                    let (hotspot_x, hotspot_y) = image.hotspot();
+                    cursor_surface.attach(Some(&image), 0, 0);
+                    cursor_surface.commit();
+                    pointer.set_cursor(
+                        serial,
+                        Some(cursor_surface),
+                        hotspot_x as i32,
+                        hotspot_y as i32,
+                    );
+                }
+            }
         }
     }
 }

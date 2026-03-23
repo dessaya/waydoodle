@@ -1,8 +1,7 @@
 # Waydoodle
 
 This is a Wayland application implemented in Rust that allows the user to draw
-on the screen (e.g. for presentations). It shows a tray icon that can be used to
-toggle the drawing mode on and off.
+on the screen (e.g. for presentations).
 
 ## Conventions
 

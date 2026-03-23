@@ -1023,6 +1023,7 @@ dependencies = [
  "smol",
  "smol-macros",
  "wayland-client",
+ "wayland-cursor",
  "wayland-protocols",
 ]
 
@@ -1049,6 +1050,17 @@ dependencies = [
  "rustix",
  "wayland-backend",
  "wayland-scanner",
+]
+
+[[package]]
+name = "wayland-cursor"
+version = "0.31.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b3298683470fbdc6ca40151dfc48c8f2fd4c41a26e13042f801f85002384091"
+dependencies = [
+ "rustix",
+ "wayland-client",
+ "xcursor",
 ]
 
 [[package]]
@@ -1203,6 +1215,12 @@ dependencies = [
  "unicode-xid",
  "wasmparser",
 ]
+
+[[package]]
+name = "xcursor"
+version = "0.3.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bec9e4a500ca8864c5b47b8b482a73d62e4237670e5b5f1d6b9e3cae50f28f2b"
 
 [[package]]
 name = "zbus"
