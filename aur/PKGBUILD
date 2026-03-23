@@ -1,6 +1,6 @@
 # Maintainer: Diego Essaya <dessaya at gmail dot com>
 pkgname=waydoodle-git
-pkgver=0.1.0
+pkgver=0.1.0.r18.f8caa9b
 pkgrel=1
 pkgdesc="A minimalistic screen annotation tool for Wayland"
 arch=('x86_64' 'aarch64')
@@ -15,7 +15,11 @@ sha256sums=('SKIP')
 
 pkgver() {
     cd waydoodle
-    printf "%s" "$(git describe --long --tags 2>/dev/null | sed 's/^v//;s/-/.r/;s/-/./' || printf "0.1.0.r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)")"
+    if git describe --long --tags 2>/dev/null | grep -q .; then
+        git describe --long --tags | sed 's/^v//;s/-/.r/;s/-/./'
+    else
+        printf "0.1.0.r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+    fi
 }
 
 prepare() {

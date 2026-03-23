@@ -5,16 +5,44 @@
     height="256"
 >
   <!-- Monitor body -->
-  <rect x="28" y="28" width="200" height="150" rx="12" ry="12" fill="#2B2B2B" />
+  <rect
+        x="28"
+        y="28"
+        width="200"
+        height="150"
+        rx="12"
+        ry="12"
+        fill="#2B2B2B"
+        stroke="#ffffff"
+        stroke-width="3"
+    />
 
   <!-- Screen -->
   <rect x="40" y="40" width="176" height="126" rx="4" ry="4" fill="#1A1A2E" />
 
   <!-- Stand neck -->
-  <rect x="112" y="178" width="32" height="24" fill="#2B2B2B" />
+  <rect
+        x="112"
+        y="178"
+        width="32"
+        height="24"
+        fill="#2B2B2B"
+        stroke="#ffffff"
+        stroke-width="3"
+    />
 
   <!-- Stand base -->
-  <rect x="80" y="200" width="96" height="12" rx="6" ry="6" fill="#2B2B2B" />
+  <rect
+        x="80"
+        y="200"
+        width="96"
+        height="12"
+        rx="6"
+        ry="6"
+        fill="#2B2B2B"
+        stroke="#ffffff"
+        stroke-width="3"
+    />
 
   <!-- Red squiggly line on screen -->
   <path
