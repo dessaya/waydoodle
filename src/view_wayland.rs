@@ -20,7 +20,9 @@ use smithay_client_toolkit::{
     seat::{
         Capability, SeatHandler, SeatState,
         keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers, RawModifiers},
-        pointer::{PointerEvent, PointerEventKind, PointerHandler},
+        pointer::{
+            PointerEvent, PointerEventKind, PointerHandler, cursor_shape::CursorShapeManager,
+        },
     },
     shell::{
         WaylandSurface,
@@ -39,10 +41,19 @@ use wayland_client::{
     globals::registry_queue_init,
     protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
 };
+use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1;
 
-use crate::model::{BrushStyle, Color, Command, Point, Tool, Waydoodle};
+use crate::model::{BrushStyle, Color, Command, ERASER_RADIUS, Point, Tool, Waydoodle};
 
 const LEFT_BUTTON: u32 = 0x110;
+
+struct EraserCursor {
+    surface: wl_surface::WlSurface,
+    _buffer: Buffer,
+    _pool: SlotPool,
+    hotspot_x: i32,
+    hotspot_y: i32,
+}
 
 pub struct View {
     // Wayland state
@@ -56,6 +67,9 @@ pub struct View {
     // Input devices
     keyboard: Option<wl_keyboard::WlKeyboard>,
     pointer: Option<wl_pointer::WlPointer>,
+    cursor_shape_manager: Option<CursorShapeManager>,
+    pointer_enter_serial: u32,
+    eraser_cursor: Option<EraserCursor>,
 
     // Overlay window state
     window: Option<Window>,
@@ -108,6 +122,9 @@ impl View {
 
             keyboard: None,
             pointer: None,
+            cursor_shape_manager: CursorShapeManager::bind(&globals, &qh).ok(),
+            pointer_enter_serial: 0,
+            eraser_cursor: None,
 
             window: None,
             pool: None,
@@ -152,14 +169,8 @@ impl View {
         match cmd {
             Command::ShowOverlay => self.show_overlay(qh),
             Command::HideOverlay => self.hide_overlay(),
-            Command::SetCrosshairCursor => {
-                // TODO: set cursor shape via wp_cursor_shape or themed pointer
-                log::debug!("SetCrosshairCursor");
-            }
-            Command::SetCircleCursor => {
-                // TODO: set custom cursor (hollow circle via SHM surface)
-                log::debug!("SetCircleCursor");
-            }
+            Command::SetCrosshairCursor => self.set_crosshair_cursor(qh),
+            Command::SetCircleCursor => self.set_circle_cursor(qh),
             Command::DrawLine {
                 style,
                 radius,
@@ -212,6 +223,95 @@ impl View {
         self.height = 0;
     }
 
+    fn set_crosshair_cursor(&self, qh: &QueueHandle<Self>) {
+        if let (Some(pointer), Some(manager)) =
+            (self.pointer.as_ref(), self.cursor_shape_manager.as_ref())
+        {
+            let device = manager.get_shape_device(pointer, qh);
+            device.set_shape(
+                self.pointer_enter_serial,
+                wp_cursor_shape_device_v1::Shape::Crosshair,
+            );
+            device.destroy();
+        }
+    }
+
+    fn set_circle_cursor(&mut self, qh: &QueueHandle<Self>) {
+        let pointer = match self.pointer.as_ref() {
+            Some(p) => p,
+            None => return,
+        };
+
+        if self.eraser_cursor.is_none() {
+            self.eraser_cursor = Some(Self::create_eraser_cursor(
+                &self.compositor_state,
+                &self.shm,
+                qh,
+            ));
+        }
+
+        let cursor = self.eraser_cursor.as_ref().unwrap();
+        pointer.set_cursor(
+            self.pointer_enter_serial,
+            Some(&cursor.surface),
+            cursor.hotspot_x,
+            cursor.hotspot_y,
+        );
+    }
+
+    fn create_eraser_cursor(
+        compositor: &CompositorState,
+        shm: &Shm,
+        qh: &QueueHandle<View>,
+    ) -> EraserCursor {
+        const CURSOR_RGBA: &[u8] = include_bytes!("../assets/eraser_cursor.rgba");
+        const CURSOR_SIZE: i32 = (ERASER_RADIUS as i32) * 2 + 1;
+        const CURSOR_STRIDE: i32 = CURSOR_SIZE * 4;
+
+        let mut pool =
+            SlotPool::new(CURSOR_RGBA.len(), shm).expect("Failed to create cursor SHM pool");
+        let (buffer, canvas) = pool
+            .create_buffer(
+                CURSOR_SIZE,
+                CURSOR_SIZE,
+                CURSOR_STRIDE,
+                wl_shm::Format::Argb8888,
+            )
+            .expect("Failed to create cursor buffer");
+
+        // The embedded image is RGBA; Wayland expects ARGB in native byte order.
+        // Convert each pixel: RGBA → ARGB stored as little-endian u32.
+        for (rgba, argb) in CURSOR_RGBA.chunks_exact(4).zip(canvas.chunks_exact_mut(4)) {
+            let [r, g, b, a] = [rgba[0], rgba[1], rgba[2], rgba[3]];
+            let pixel = u32::from_be_bytes([a, r, g, b]);
+            argb.copy_from_slice(&pixel.to_le_bytes());
+        }
+
+        let surface = compositor.create_surface(qh);
+        surface.attach(Some(buffer.wl_buffer()), 0, 0);
+        surface.damage_buffer(0, 0, CURSOR_SIZE, CURSOR_SIZE);
+        surface.commit();
+
+        EraserCursor {
+            surface,
+            _buffer: buffer,
+            _pool: pool,
+            hotspot_x: CURSOR_SIZE / 2,
+            hotspot_y: CURSOR_SIZE / 2,
+        }
+    }
+
+    fn apply_current_cursor(&mut self, qh: &QueueHandle<Self>) {
+        if let Some(overlay) = self.model.overlay.as_ref() {
+            let cmd = overlay.cursor_command();
+            match cmd {
+                Command::SetCrosshairCursor => self.set_crosshair_cursor(qh),
+                Command::SetCircleCursor => self.set_circle_cursor(qh),
+                _ => {}
+            }
+        }
+    }
+
     fn ensure_pool(&mut self) {
         if self.pool.is_none() && self.width > 0 && self.height > 0 {
             let size = self.width as usize * self.height as usize * 4;
@@ -247,13 +347,11 @@ impl View {
                     wl_shm::Format::Argb8888,
                 )
                 .expect("Failed to create SHM buffer");
-            // Start fully transparent
             canvas.fill(0);
             buf
         });
 
         if pool.canvas(buffer).is_none() {
-            // Compositor hasn't released previous buffer; create a new one.
             let (new_buffer, canvas) = pool
                 .create_buffer(
                     width as i32,
@@ -550,6 +648,7 @@ impl SeatHandler for View {
                 .seat_state
                 .get_pointer(qh, &seat)
                 .expect("Failed to get pointer");
+
             self.pointer = Some(pointer);
         }
     }
@@ -663,8 +762,10 @@ impl PointerHandler for View {
             }
 
             match event.kind {
-                PointerEventKind::Enter { .. } => {
+                PointerEventKind::Enter { serial } => {
+                    self.pointer_enter_serial = serial;
                     self.pointer_pos = event.position;
+                    self.apply_current_cursor(qh);
                 }
                 PointerEventKind::Leave { .. } => {
                     self.pointer_pressed = false;
