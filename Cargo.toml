@@ -10,3 +10,8 @@ keywords = ["wayland", "annotation", "drawing", "presentation"]
 categories = ["graphics"]
 
 [dependencies]
+smithay-client-toolkit = { version = "0.20", features = ["calloop", "xkbcommon"] }
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client"] }
+log = "0.4"
+env_logger = "0.11"
