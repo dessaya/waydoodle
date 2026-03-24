@@ -21,9 +21,10 @@ use wayland_client::{
     protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_surface},
 };
 
+use super::{DirtyRect, View};
 use crate::model::Point;
 
-use super::{DirtyRect, LEFT_BUTTON, View};
+const LEFT_BUTTON: u32 = 0x110;
 
 impl CompositorHandler for View {
     fn scale_factor_changed(
@@ -74,7 +75,7 @@ impl CompositorHandler for View {
 
 impl OutputHandler for View {
     fn output_state(&mut self) -> &mut OutputState {
-        &mut self.output_state
+        &mut self.wayland.output_state
     }
 
     fn new_output(
@@ -133,7 +134,7 @@ impl WindowHandler for View {
 
 impl SeatHandler for View {
     fn seat_state(&mut self) -> &mut SeatState {
-        &mut self.seat_state
+        &mut self.wayland.seat_state
     }
 
     fn new_seat(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _seat: wl_seat::WlSeat) {}
@@ -145,16 +146,17 @@ impl SeatHandler for View {
         seat: wl_seat::WlSeat,
         capability: Capability,
     ) {
-        if self.tablet_seat.is_none() {
-            if let Some(ref manager) = self.tablet_manager {
-                let tablet_seat = manager.get_tablet_seat(&seat, qh, ());
-                self.tablet_seat = Some(tablet_seat);
-                log::info!("Tablet seat created for seat");
-            }
+        if self.tablet_seat.is_none()
+            && let Some(ref manager) = self.tablet_manager
+        {
+            let tablet_seat = manager.get_tablet_seat(&seat, qh, ());
+            self.tablet_seat = Some(tablet_seat);
+            log::info!("Tablet seat created for seat");
         }
 
         if capability == Capability::Keyboard && self.keyboard.is_none() {
             let keyboard = self
+                .wayland
                 .seat_state
                 .get_keyboard_with_repeat(
                     qh,
@@ -169,6 +171,7 @@ impl SeatHandler for View {
 
         if capability == Capability::Pointer && self.pointer.is_none() {
             let pointer = self
+                .wayland
                 .seat_state
                 .get_pointer(qh, &seat)
                 .expect("Failed to get pointer");
@@ -184,15 +187,15 @@ impl SeatHandler for View {
         _seat: wl_seat::WlSeat,
         capability: Capability,
     ) {
-        if capability == Capability::Keyboard {
-            if let Some(kbd) = self.keyboard.take() {
-                kbd.release();
-            }
+        if capability == Capability::Keyboard
+            && let Some(kbd) = self.keyboard.take()
+        {
+            kbd.release();
         }
-        if capability == Capability::Pointer {
-            if let Some(ptr) = self.pointer.take() {
-                ptr.release();
-            }
+        if capability == Capability::Pointer
+            && let Some(ptr) = self.pointer.take()
+        {
+            ptr.release();
         }
     }
 
@@ -301,19 +304,19 @@ impl PointerHandler for View {
                     let prev = self.pointer_pos;
                     self.pointer_pos = event.position;
 
-                    if self.pointer_pressed {
-                        if let Some(overlay) = self.model.overlay.as_ref() {
-                            let from = Point {
-                                x: prev.0,
-                                y: prev.1,
-                            };
-                            let to = Point {
-                                x: event.position.0,
-                                y: event.position.1,
-                            };
-                            let cmd = overlay.draw(from, to);
-                            self.dispatch_command(qh, cmd);
-                        }
+                    if self.pointer_pressed
+                        && let Some(overlay) = self.model.overlay.as_ref()
+                    {
+                        let from = Point {
+                            x: prev.0,
+                            y: prev.1,
+                        };
+                        let to = Point {
+                            x: event.position.0,
+                            y: event.position.1,
+                        };
+                        let cmd = overlay.draw(from, to);
+                        self.dispatch_command(qh, cmd);
                     }
                 }
                 PointerEventKind::Press { button, .. } => {
@@ -344,7 +347,7 @@ impl PointerHandler for View {
 
 impl ShmHandler for View {
     fn shm_state(&mut self) -> &mut Shm {
-        &mut self.shm
+        &mut self.wayland.shm
     }
 }
 
@@ -360,7 +363,7 @@ delegate_registry!(View);
 
 impl ProvidesRegistryState for View {
     fn registry(&mut self) -> &mut RegistryState {
-        &mut self.registry_state
+        &mut self.wayland.registry_state
     }
     registry_handlers![OutputState, SeatState];
 }

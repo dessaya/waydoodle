@@ -12,14 +12,13 @@ use smithay_client_toolkit::{
     shm::Shm,
 };
 use wayland_client::{Connection, globals::registry_queue_init};
-
-use super::cursor::TabletCursorState;
 use wayland_protocols::wp::tablet::zv2::client::zwp_tablet_manager_v2;
 
 use crate::model::Waydoodle;
 use crate::tray::{TrayEvent, WaydoodleTray};
 
-use super::View;
+use super::cursor::TabletCursorState;
+use super::{View, WaylandState};
 
 impl View {
     pub fn run() {
@@ -76,12 +75,14 @@ impl View {
         let eraser_cursor = View::create_eraser_cursor(&compositor_state, &shm, &qh);
 
         let mut view = View {
-            registry_state: RegistryState::new(&globals),
-            seat_state: SeatState::new(&globals, &qh),
-            output_state: OutputState::new(&globals, &qh),
-            compositor_state,
-            xdg_shell,
-            shm,
+            wayland: WaylandState {
+                registry_state: RegistryState::new(&globals),
+                seat_state: SeatState::new(&globals, &qh),
+                output_state: OutputState::new(&globals, &qh),
+                compositor_state,
+                xdg_shell,
+                shm,
+            },
 
             keyboard: None,
             pointer: None,

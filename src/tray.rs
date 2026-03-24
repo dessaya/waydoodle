@@ -1,6 +1,5 @@
 use calloop::channel::Sender;
-use ksni::menu::StandardItem;
-use ksni::{self, MenuItem, Tray};
+use ksni::{MenuItem, Tray, menu::StandardItem};
 
 #[derive(Debug, Clone)]
 pub enum TrayEvent {

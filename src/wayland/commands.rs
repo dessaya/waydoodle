@@ -4,9 +4,8 @@ use smithay_client_toolkit::{
 };
 use wayland_client::QueueHandle;
 
-use crate::model::{Color, Command, Tool};
-
 use super::View;
+use crate::model::{Color, Command, Tool};
 
 impl View {
     pub(super) fn dispatch_command(&mut self, qh: &QueueHandle<Self>, cmd: Command) {
@@ -47,8 +46,9 @@ impl View {
             self.hide_overlay();
         }
 
-        let surface = self.compositor_state.create_surface(qh);
+        let surface = self.wayland.compositor_state.create_surface(qh);
         let window = self
+            .wayland
             .xdg_shell
             .create_window(surface, WindowDecorations::None, qh);
 

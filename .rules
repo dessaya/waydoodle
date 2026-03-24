@@ -62,3 +62,18 @@ annotate on the screen (e.g. for presentations).
   // Event‑loop thread
   // ---------------------------------------------------------------------------
   ```
+
+- Always attempt to group similar `use` statements together, place them at the
+  top of the file and separate them from the rest of the code with a blank line.
+  For example:
+
+  ```
+  use std::sync::{Arc, Mutex};
+  ```
+
+  instead of
+
+  ```
+  use std::sync::Arc;
+  use std::sync::Mutex;
+  ```

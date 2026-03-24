@@ -1,16 +1,16 @@
 use smithay_client_toolkit::{shell::WaylandSurface, shm::slot::SlotPool};
 use wayland_client::{QueueHandle, protocol::wl_shm};
 
-use crate::model::{BrushStyle, Color, Point};
-
 use super::{DirtyRect, View};
+use crate::model::{BrushStyle, Color, Point};
 
 impl View {
     pub(super) fn ensure_pool(&mut self) {
         if self.pool.is_none() && self.width > 0 && self.height > 0 {
             let size = self.width as usize * self.height as usize * 4;
-            self.pool =
-                Some(SlotPool::new(size, &self.shm).expect("Failed to create SHM slot pool"));
+            self.pool = Some(
+                SlotPool::new(size, &self.wayland.shm).expect("Failed to create SHM slot pool"),
+            );
         }
     }
 
@@ -97,61 +97,28 @@ impl View {
         canvas: &mut [u8],
         width: u32,
         height: u32,
-        cx: f64,
-        cy: f64,
+        center: Point,
         radius: f64,
         pixel: [u8; 4],
-    ) {
+    ) -> DirtyRect {
         let r = radius.ceil() as i32;
-        let cx_i = cx.round() as i32;
-        let cy_i = cy.round() as i32;
+        let cx_i = center.x.round() as i32;
+        let cy_i = center.y.round() as i32;
         let r_sq = radius * radius;
         for dy in -r..=r {
             for dx in -r..=r {
-                let dist_sq = (dx as f64 - (cx - cx_i as f64)).powi(2)
-                    + (dy as f64 - (cy - cy_i as f64)).powi(2);
+                let dist_sq = (dx as f64 - (center.x - cx_i as f64)).powi(2)
+                    + (dy as f64 - (center.y - cy_i as f64)).powi(2);
                 if dist_sq <= r_sq {
                     Self::set_pixel(canvas, width, height, cx_i + dx, cy_i + dy, pixel);
                 }
             }
         }
-    }
 
-    fn stroke(
-        canvas: &mut [u8],
-        width: u32,
-        height: u32,
-        x0: f64,
-        y0: f64,
-        x1: f64,
-        y1: f64,
-        radius: f64,
-        pixel: [u8; 4],
-    ) {
-        let dx = x1 - x0;
-        let dy = y1 - y0;
-        let dist = dx.hypot(dy);
-        let steps = (dist / 0.5).ceil().max(1.0) as usize;
-        for i in 0..=steps {
-            let t = i as f64 / steps as f64;
-            let x = x0 + dx * t;
-            let y = y0 + dy * t;
-            Self::fill_circle(canvas, width, height, x, y, radius, pixel);
-        }
-    }
-
-    fn brush_pixel(style: BrushStyle) -> [u8; 4] {
-        match style {
-            BrushStyle::Draw(color) => Self::color_to_argb_le(color),
-            BrushStyle::Erase => [0, 0, 0, 0],
-        }
-    }
-
-    fn circle_dirty_rect(cx: f64, cy: f64, radius: f64, width: u32, height: u32) -> DirtyRect {
-        let x = (cx - radius).floor().max(0.0) as i32;
-        let y = (cy - radius).floor().max(0.0) as i32;
-        let x1 = (cx + radius).ceil().min(width as f64) as i32;
-        let y1 = (cy + radius).ceil().min(height as f64) as i32;
+        let x = (center.x - radius).floor().max(0.0) as i32;
+        let y = (center.y - radius).floor().max(0.0) as i32;
+        let x1 = (center.x + radius).ceil().min(width as f64) as i32;
+        let y1 = (center.y + radius).ceil().min(height as f64) as i32;
         DirtyRect {
             x,
             y,
@@ -160,19 +127,32 @@ impl View {
         }
     }
 
-    fn stroke_dirty_rect(
-        x0: f64,
-        y0: f64,
-        x1: f64,
-        y1: f64,
-        radius: f64,
+    fn stroke(
+        canvas: &mut [u8],
         width: u32,
         height: u32,
+        from: Point,
+        to: Point,
+        radius: f64,
+        pixel: [u8; 4],
     ) -> DirtyRect {
-        let min_x = x0.min(x1) - radius;
-        let min_y = y0.min(y1) - radius;
-        let max_x = x0.max(x1) + radius;
-        let max_y = y0.max(y1) + radius;
+        let dx = to.x - from.x;
+        let dy = to.y - from.y;
+        let dist = dx.hypot(dy);
+        let steps = (dist / 0.5).ceil().max(1.0) as usize;
+        for i in 0..=steps {
+            let t = i as f64 / steps as f64;
+            let center = Point {
+                x: from.x + dx * t,
+                y: from.y + dy * t,
+            };
+            Self::fill_circle(canvas, width, height, center, radius, pixel);
+        }
+
+        let min_x = from.x.min(to.x) - radius;
+        let min_y = from.y.min(to.y) - radius;
+        let max_x = from.x.max(to.x) + radius;
+        let max_y = from.y.max(to.y) + radius;
         let x = min_x.floor().max(0.0) as i32;
         let y = min_y.floor().max(0.0) as i32;
         let x1 = max_x.ceil().min(width as f64) as i32;
@@ -182,6 +162,13 @@ impl View {
             y,
             width: (x1 - x).max(0),
             height: (y1 - y).max(0),
+        }
+    }
+
+    fn brush_pixel(style: BrushStyle) -> [u8; 4] {
+        match style {
+            BrushStyle::Draw(color) => Self::color_to_argb_le(color),
+            BrushStyle::Erase => [0, 0, 0, 0],
         }
     }
 
@@ -196,12 +183,7 @@ impl View {
         let height = self.height;
         let canvas = self.canvas_mut()?;
         let pixel = Self::brush_pixel(style);
-        Self::stroke(
-            canvas, width, height, from.x, from.y, to.x, to.y, radius, pixel,
-        );
-        Some(Self::stroke_dirty_rect(
-            from.x, from.y, to.x, to.y, radius, width, height,
-        ))
+        Some(Self::stroke(canvas, width, height, from, to, radius, pixel))
     }
 
     pub(super) fn render_dot(
@@ -214,9 +196,8 @@ impl View {
         let height = self.height;
         let canvas = self.canvas_mut()?;
         let pixel = Self::brush_pixel(style);
-        Self::fill_circle(canvas, width, height, center.x, center.y, radius, pixel);
-        Some(Self::circle_dirty_rect(
-            center.x, center.y, radius, width, height,
+        Some(Self::fill_circle(
+            canvas, width, height, center, radius, pixel,
         ))
     }
 }

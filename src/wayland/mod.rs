@@ -17,7 +17,7 @@ use smithay_client_toolkit::{
     output::OutputState,
     registry::RegistryState,
     seat::{SeatState, pointer::cursor_shape::CursorShapeManager},
-    shell::xdg::XdgShell,
+    shell::xdg::{XdgShell, window::Window},
     shm::{
         Shm,
         slot::{Buffer, SlotPool},
@@ -30,10 +30,6 @@ use wayland_protocols::wp::tablet::zv2::client::{
 
 use crate::model::Waydoodle;
 use crate::tray::WaydoodleTray;
-
-use smithay_client_toolkit::shell::xdg::window::Window;
-
-pub(crate) const LEFT_BUTTON: u32 = 0x110;
 
 #[derive(Clone, Copy)]
 pub(crate) struct DirtyRect {
@@ -54,14 +50,17 @@ impl DirtyRect {
     }
 }
 
+struct WaylandState {
+    pub registry_state: RegistryState,
+    pub seat_state: SeatState,
+    pub output_state: OutputState,
+    pub compositor_state: CompositorState,
+    pub xdg_shell: XdgShell,
+    pub shm: Shm,
+}
+
 pub struct View {
-    // Wayland state
-    registry_state: RegistryState,
-    seat_state: SeatState,
-    output_state: OutputState,
-    compositor_state: CompositorState,
-    xdg_shell: XdgShell,
-    shm: Shm,
+    wayland: WaylandState,
 
     // Input devices
     keyboard: Option<wl_keyboard::WlKeyboard>,

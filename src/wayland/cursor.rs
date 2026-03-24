@@ -12,9 +12,8 @@ use wayland_client::{
 use wayland_cursor::CursorTheme;
 use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1;
 
-use crate::model::{CursorShape, ERASER_RADIUS};
-
 use super::View;
+use crate::model::{CursorShape, ERASER_RADIUS};
 
 pub(super) struct Cursor {
     surface: wl_surface::WlSurface,

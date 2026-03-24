@@ -1,15 +1,12 @@
-use wayland_client::delegate_noop;
-use wayland_client::event_created_child;
-use wayland_client::{Connection, Dispatch, QueueHandle};
+use wayland_client::{Connection, Dispatch, QueueHandle, delegate_noop, event_created_child};
 use wayland_protocols::wp::tablet::zv2::client::{
     zwp_tablet_manager_v2, zwp_tablet_pad_group_v2, zwp_tablet_pad_ring_v2,
     zwp_tablet_pad_strip_v2, zwp_tablet_pad_v2, zwp_tablet_seat_v2, zwp_tablet_tool_v2,
     zwp_tablet_v2,
 };
 
-use crate::model::Point;
-
 use super::View;
+use crate::model::Point;
 
 delegate_noop!(View: ignore zwp_tablet_manager_v2::ZwpTabletManagerV2);
 
@@ -75,16 +72,16 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for View {
                 let prev = state.tablet_pos;
                 state.tablet_pos = (x, y);
 
-                if state.tablet_pressed {
-                    if let Some(overlay) = state.model.overlay.as_ref() {
-                        let from = Point {
-                            x: prev.0,
-                            y: prev.1,
-                        };
-                        let to = Point { x, y };
-                        let cmd = overlay.draw(from, to);
-                        state.dispatch_command(qh, cmd);
-                    }
+                if state.tablet_pressed
+                    && let Some(overlay) = state.model.overlay.as_ref()
+                {
+                    let from = Point {
+                        x: prev.0,
+                        y: prev.1,
+                    };
+                    let to = Point { x, y };
+                    let cmd = overlay.draw(from, to);
+                    state.dispatch_command(qh, cmd);
                 }
             }
             zwp_tablet_tool_v2::Event::Pressure { .. } => {}
