@@ -3,6 +3,57 @@
 This is a Wayland application implemented in Rust that allows the user to
 annotate on the screen (e.g. for presentations).
 
+## Spec
+
+- The app state has the following data:
+  
+  ```
+  Waydoodle = {
+    overlay: Option(Overlay) = None
+  }
+  Overlay(width: u32, height: u32) = {
+    current_tool: Tool = Pen(Red)
+    buffer: [width * height * 4]u8 = [0x00000000] // ARGB pixel data
+  }
+  Tool = Pen(Color) | Eraser
+  Color = Red | Green | Blue | Yellow
+  ```
+
+- The app shows a tray icon with the `waydoodle` icon. The menu has 2
+  items: "Toggle overlay" and "Quit". The first one toggles the annotation
+  overlay on and off, while the second one exits the app.
+
+- The app also listens for SIGUSR1, which also toggles the overlay.
+
+- Whenever the overlay is shown, the Overlay struct is created with default
+  values. When it is hidden, the struct is dropped and its resources are freed.
+  There is no persistence of the buffer or the current tool between toggles.
+
+- If the screen resolution changes while the overlay is visible, the Overlay
+  struct is recreated with the new dimensions and default values.
+
+- Whenever the overlay is visible, the app listens for key presses to change the current
+  tool:
+  - r: red pen
+  - g: green pen
+  - b: blue pen
+  - y: yellow pen
+  - e: eraser
+  - c: clear (erase everything from the buffer)
+
+- The overlay is a maximized window (not fullscreen) with no decorations. The Overlay
+  object provides the pixel data for the entire window.
+
+- Whenever the mouse pointer OR the tablet stylus is over the overlay, show
+  a cursor shape depending on the current active tool:
+  - Pen: standard "crosshair"
+  - Eraser: a hollow circle (radius 10) (non-standard so it has to be custom-drawn)
+
+- Whenever the mouse is moved with left button pressed, or the tablet stylus is moved with pressure > 0, draw on the buffer
+  using the current tool:
+  - Pen: draw a line from the previous position to the current position, using the current color and a thickness of 5 pixels
+  - Eraser: draw a filled circle with radius 10 at the current position, using transparent color (i.e. erase)
+
 ## Conventions
 
 - Avoid writing top-level comments separating sections like:

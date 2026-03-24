@@ -10,14 +10,3 @@ keywords = ["wayland", "annotation", "drawing", "presentation"]
 categories = ["graphics"]
 
 [dependencies]
-async-channel = "2"
-async-signal = "0.2"
-libc = "0.2"
-futures-lite = "2"
-ksni = { version = "0.3", default-features = false, features = ["async-io"] }
-macro_rules_attribute = "0.2"
-smol = "2"
-smol-macros = "0.1"
-wayland-client = "0.31"
-wayland-cursor = "0.31"
-wayland-protocols = { version = "0.32", features = ["client"] }
