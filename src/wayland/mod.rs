@@ -10,6 +10,7 @@ mod cursor;
 mod drawing;
 mod handlers;
 mod init;
+mod tablet;
 
 use smithay_client_toolkit::{
     compositor::CompositorState,
@@ -23,6 +24,9 @@ use smithay_client_toolkit::{
     },
 };
 use wayland_client::protocol::{wl_keyboard, wl_pointer};
+use wayland_protocols::wp::tablet::zv2::client::{
+    zwp_tablet_manager_v2, zwp_tablet_seat_v2, zwp_tablet_tool_v2,
+};
 
 use crate::model::Waydoodle;
 use crate::tray::WaydoodleTray;
@@ -46,6 +50,15 @@ pub struct View {
     cursor_shape_manager: Option<CursorShapeManager>,
     pointer_enter_serial: u32,
     eraser_cursor: Option<cursor::Cursor>,
+    tablet_cursor: Option<cursor::TabletCursorState>,
+
+    // Tablet input
+    tablet_manager: Option<zwp_tablet_manager_v2::ZwpTabletManagerV2>,
+    tablet_seat: Option<zwp_tablet_seat_v2::ZwpTabletSeatV2>,
+    tablet_tool: Option<zwp_tablet_tool_v2::ZwpTabletToolV2>,
+    tablet_tool_serial: u32,
+    tablet_pos: (f64, f64),
+    tablet_pressed: bool,
 
     // Overlay window state
     window: Option<Window>,

@@ -6,9 +6,10 @@ use smithay_client_toolkit::{
     },
 };
 use wayland_client::{
-    QueueHandle,
+    Connection, QueueHandle,
     protocol::{wl_shm, wl_surface},
 };
+use wayland_cursor::CursorTheme;
 use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1;
 
 use crate::model::{Command, ERASER_RADIUS};
@@ -21,6 +22,30 @@ pub(super) struct Cursor {
     _pool: SlotPool,
     hotspot_x: i32,
     hotspot_y: i32,
+}
+
+pub(super) struct TabletCursorState {
+    cursor_surface: wl_surface::WlSurface,
+    cursor_theme: CursorTheme,
+    eraser_cursor: Option<Cursor>,
+}
+
+impl TabletCursorState {
+    pub(super) fn new(
+        conn: &Connection,
+        compositor: &CompositorState,
+        shm: &Shm,
+        qh: &QueueHandle<View>,
+    ) -> Self {
+        let cursor_surface = compositor.create_surface(qh);
+        let cursor_theme =
+            CursorTheme::load(conn, shm.wl_shm().clone(), 24).expect("Failed to load cursor theme");
+        Self {
+            cursor_surface,
+            cursor_theme,
+            eraser_cursor: None,
+        }
+    }
 }
 
 impl View {
@@ -54,6 +79,57 @@ impl View {
         let cursor = self.eraser_cursor.as_ref().unwrap();
         pointer.set_cursor(
             self.pointer_enter_serial,
+            Some(&cursor.surface),
+            cursor.hotspot_x,
+            cursor.hotspot_y,
+        );
+    }
+
+    pub(super) fn set_tablet_crosshair_cursor(&mut self) {
+        let tool = match self.tablet_tool.as_ref() {
+            Some(t) => t,
+            None => return,
+        };
+        let tablet_cursor = match self.tablet_cursor.as_mut() {
+            Some(tc) => tc,
+            None => return,
+        };
+
+        if let Some(cursor) = tablet_cursor.cursor_theme.get_cursor("crosshair") {
+            let image = &cursor[0];
+            let (hotspot_x, hotspot_y) = image.hotspot();
+            tablet_cursor.cursor_surface.attach(Some(image), 0, 0);
+            tablet_cursor.cursor_surface.commit();
+            tool.set_cursor(
+                self.tablet_tool_serial,
+                Some(&tablet_cursor.cursor_surface),
+                hotspot_x as i32,
+                hotspot_y as i32,
+            );
+        }
+    }
+
+    pub(super) fn set_tablet_circle_cursor(&mut self, qh: &QueueHandle<Self>) {
+        let tool = match self.tablet_tool.as_ref() {
+            Some(t) => t.clone(),
+            None => return,
+        };
+        let tablet_cursor = match self.tablet_cursor.as_mut() {
+            Some(tc) => tc,
+            None => return,
+        };
+
+        if tablet_cursor.eraser_cursor.is_none() {
+            tablet_cursor.eraser_cursor = Some(Self::create_eraser_cursor(
+                &self.compositor_state,
+                &self.shm,
+                qh,
+            ));
+        }
+
+        let cursor = tablet_cursor.eraser_cursor.as_ref().unwrap();
+        tool.set_cursor(
+            self.tablet_tool_serial,
             Some(&cursor.surface),
             cursor.hotspot_x,
             cursor.hotspot_y,
@@ -108,6 +184,21 @@ impl View {
             match cmd {
                 Command::SetCrosshairCursor => self.set_crosshair_cursor(qh),
                 Command::SetCircleCursor => self.set_circle_cursor(qh),
+                _ => {}
+            }
+        }
+    }
+
+    pub(super) fn apply_tablet_cursor(&mut self, qh: &QueueHandle<Self>) {
+        if self.tablet_tool.is_none() {
+            return;
+        }
+
+        if let Some(overlay) = self.model.overlay.as_ref() {
+            let cmd = overlay.cursor_command();
+            match cmd {
+                Command::SetCrosshairCursor => self.set_tablet_crosshair_cursor(),
+                Command::SetCircleCursor => self.set_tablet_circle_cursor(qh),
                 _ => {}
             }
         }

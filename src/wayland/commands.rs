@@ -13,8 +13,14 @@ impl View {
         match cmd {
             Command::ShowOverlay => self.show_overlay(qh),
             Command::HideOverlay => self.hide_overlay(),
-            Command::SetCrosshairCursor => self.set_crosshair_cursor(qh),
-            Command::SetCircleCursor => self.set_circle_cursor(qh),
+            Command::SetCrosshairCursor => {
+                self.set_crosshair_cursor(qh);
+                self.set_tablet_crosshair_cursor();
+            }
+            Command::SetCircleCursor => {
+                self.set_circle_cursor(qh);
+                self.set_tablet_circle_cursor(qh);
+            }
             Command::DrawLine {
                 style,
                 radius,

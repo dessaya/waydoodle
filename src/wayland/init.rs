@@ -13,6 +13,9 @@ use smithay_client_toolkit::{
 };
 use wayland_client::{Connection, globals::registry_queue_init};
 
+use super::cursor::TabletCursorState;
+use wayland_protocols::wp::tablet::zv2::client::zwp_tablet_manager_v2;
+
 use crate::model::Waydoodle;
 use crate::tray::{TrayEvent, WaydoodleTray};
 
@@ -20,6 +23,10 @@ use super::View;
 
 impl View {
     pub fn run() {
+        // Block SIGUSR1 before spawning any background threads (e.g. the tray)
+        // so they inherit the blocked mask. Signals::new() calls sigprocmask.
+        let sigusr1 = Signals::new(&[Signal::SIGUSR1]).expect("Failed to register SIGUSR1");
+
         let conn = Connection::connect_to_env().expect("Failed to connect to Wayland compositor");
         let (globals, event_queue) =
             registry_queue_init(&conn).expect("Failed to initialize registry");
@@ -37,6 +44,18 @@ impl View {
             CompositorState::bind(&globals, &qh).expect("wl_compositor not available");
         let xdg_shell = XdgShell::bind(&globals, &qh).expect("xdg_wm_base not available");
         let shm = Shm::bind(&globals, &qh).expect("wl_shm not available");
+
+        let tablet_manager = globals
+            .bind::<zwp_tablet_manager_v2::ZwpTabletManagerV2, _, _>(&qh, 1..=1, ())
+            .ok();
+
+        let tablet_cursor = if tablet_manager.is_some() {
+            log::info!("Tablet manager bound");
+            Some(TabletCursorState::new(&conn, &compositor_state, &shm, &qh))
+        } else {
+            log::info!("Tablet manager not available (tablet input will be unavailable)");
+            None
+        };
 
         // Set up the calloop channel for tray events.
         let (tray_sender, tray_channel) = calloop::channel::channel::<TrayEvent>();
@@ -67,6 +86,14 @@ impl View {
             cursor_shape_manager: CursorShapeManager::bind(&globals, &qh).ok(),
             pointer_enter_serial: 0,
             eraser_cursor: None,
+            tablet_cursor,
+
+            tablet_manager,
+            tablet_seat: None,
+            tablet_tool: None,
+            tablet_tool_serial: 0,
+            tablet_pos: (0.0, 0.0),
+            tablet_pressed: false,
 
             window: None,
             pool: None,
@@ -87,8 +114,7 @@ impl View {
             exit: false,
         };
 
-        // Register SIGUSR1 handler to toggle the overlay.
-        let sigusr1 = Signals::new(&[Signal::SIGUSR1]).expect("Failed to register SIGUSR1");
+        // Handle SIGUSR1 to toggle the overlay.
         let qh_clone = qh.clone();
         event_loop
             .handle()

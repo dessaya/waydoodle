@@ -151,6 +151,14 @@ impl SeatHandler for View {
         seat: wl_seat::WlSeat,
         capability: Capability,
     ) {
+        if self.tablet_seat.is_none() {
+            if let Some(ref manager) = self.tablet_manager {
+                let tablet_seat = manager.get_tablet_seat(&seat, qh, ());
+                self.tablet_seat = Some(tablet_seat);
+                log::info!("Tablet seat created for seat");
+            }
+        }
+
         if capability == Capability::Keyboard && self.keyboard.is_none() {
             let keyboard = self
                 .seat_state
