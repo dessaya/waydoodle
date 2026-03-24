@@ -181,6 +181,10 @@ impl WindowHandler for View {
                     overlay.buffer = buffer;
                     overlay.width = new_width;
                     overlay.height = new_height;
+
+                    if let Some(cmd) = self.model.reset_overlay() {
+                        self.dispatch_command(qh, cmd);
+                    }
                 }
 
                 self.overlay = Some(OverlayState::Ready(overlay));

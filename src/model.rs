@@ -149,6 +149,17 @@ impl Waydoodle {
         self.overlay = None;
         Command::HideOverlay
     }
+
+    /// Reset the overlay to its default state (e.g. after a resolution change).
+    /// Returns a cursor-shape command so the view can update accordingly.
+    /// No-op if the overlay is not active.
+    pub fn reset_overlay(&mut self) -> Option<Command> {
+        self.overlay.as_ref()?;
+        self.overlay = Some(Overlay::new());
+        Some(Command::SetCursorShape(
+            self.overlay.as_ref().unwrap().cursor_shape(),
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -268,7 +279,14 @@ mod tests {
     #[test]
     fn draw_line_all_colors() {
         let mut overlay = Overlay::new();
-        for color in [Color::Red, Color::Green, Color::Blue, Color::Yellow] {
+        for color in [
+            Color::Red,
+            Color::Green,
+            Color::Blue,
+            Color::Yellow,
+            Color::Magenta,
+            Color::Cyan,
+        ] {
             overlay.current_tool = Tool::Pen(color);
             let cmd = overlay.draw(pt(0.0, 0.0), pt(1.0, 1.0));
             assert_eq!(
@@ -343,6 +361,28 @@ mod tests {
         let cmd = app.hide_overlay();
         assert!(app.overlay.is_none());
         assert_eq!(cmd, Command::HideOverlay);
+    }
+
+    #[test]
+    fn reset_overlay_resets_tool_to_default() {
+        let mut app = Waydoodle::new();
+        app.show_overlay();
+        app.overlay.as_mut().unwrap().current_tool = Tool::Eraser;
+
+        let cmd = app.reset_overlay();
+        assert_eq!(cmd, Some(Command::SetCursorShape(CursorShape::Crosshair)));
+        assert_eq!(
+            app.overlay.as_ref().unwrap().current_tool,
+            Tool::Pen(Color::Red)
+        );
+    }
+
+    #[test]
+    fn reset_overlay_noop_when_hidden() {
+        let mut app = Waydoodle::new();
+        let cmd = app.reset_overlay();
+        assert_eq!(cmd, None);
+        assert!(app.overlay.is_none());
     }
 
     #[test]
