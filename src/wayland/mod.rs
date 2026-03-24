@@ -35,6 +35,25 @@ use smithay_client_toolkit::shell::xdg::window::Window;
 
 pub(crate) const LEFT_BUTTON: u32 = 0x110;
 
+#[derive(Clone, Copy)]
+pub(crate) struct DirtyRect {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+impl DirtyRect {
+    pub fn full(width: u32, height: u32) -> Self {
+        Self {
+            x: 0,
+            y: 0,
+            width: width as i32,
+            height: height as i32,
+        }
+    }
+}
+
 pub struct View {
     // Wayland state
     registry_state: RegistryState,
@@ -66,7 +85,6 @@ pub struct View {
     width: u32,
     height: u32,
     first_configure: bool,
-    dirty: bool,
 
     // Pointer tracking
     pointer_enter_serial: u32,

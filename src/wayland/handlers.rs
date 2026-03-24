@@ -23,7 +23,7 @@ use wayland_client::{
 
 use crate::model::Point;
 
-use super::{LEFT_BUTTON, View};
+use super::{DirtyRect, LEFT_BUTTON, View};
 
 impl CompositorHandler for View {
     fn scale_factor_changed(
@@ -47,13 +47,10 @@ impl CompositorHandler for View {
     fn frame(
         &mut self,
         _conn: &Connection,
-        qh: &QueueHandle<Self>,
+        _qh: &QueueHandle<Self>,
         _surface: &wl_surface::WlSurface,
         _time: u32,
     ) {
-        if self.dirty {
-            self.draw_frame(qh);
-        }
     }
 
     fn surface_enter(
@@ -130,8 +127,7 @@ impl WindowHandler for View {
             self.first_configure = false;
         }
 
-        self.dirty = true;
-        self.draw_frame(qh);
+        self.draw_frame(qh, DirtyRect::full(self.width, self.height));
     }
 }
 

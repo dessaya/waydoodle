@@ -10,10 +10,19 @@ use super::View;
 
 impl View {
     pub(super) fn dispatch_command(&mut self, qh: &QueueHandle<Self>, cmd: Command) {
-        match cmd {
-            Command::ShowOverlay => self.show_overlay(qh),
-            Command::HideOverlay => self.hide_overlay(),
-            Command::SetCursorShape(shape) => self.apply_cursor(shape, qh),
+        let damage = match cmd {
+            Command::ShowOverlay => {
+                self.show_overlay(qh);
+                None
+            }
+            Command::HideOverlay => {
+                self.hide_overlay();
+                None
+            }
+            Command::SetCursorShape(shape) => {
+                self.apply_cursor(shape, qh);
+                None
+            }
             Command::DrawLine {
                 style,
                 radius,
@@ -26,10 +35,10 @@ impl View {
                 center,
             } => self.render_dot(style, radius, center),
             Command::ClearBuffer => self.clear_buffer(),
-        }
+        };
 
-        if self.dirty {
-            self.draw_frame(qh);
+        if let Some(damage) = damage {
+            self.draw_frame(qh, damage);
         }
     }
 
@@ -51,7 +60,6 @@ impl View {
         self.window = Some(window);
         self.first_configure = true;
         self.buffer = None;
-        self.dirty = true;
     }
 
     pub(super) fn hide_overlay(&mut self) {

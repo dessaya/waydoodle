@@ -104,7 +104,6 @@ impl View {
             width: 0,
             height: 0,
             first_configure: false,
-            dirty: false,
 
             pointer_pos: (0.0, 0.0),
             pointer_pressed: false,

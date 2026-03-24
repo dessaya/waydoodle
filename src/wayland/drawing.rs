@@ -3,7 +3,7 @@ use wayland_client::{QueueHandle, protocol::wl_shm};
 
 use crate::model::{BrushStyle, Color, Point};
 
-use super::View;
+use super::{DirtyRect, View};
 
 impl View {
     pub(super) fn ensure_pool(&mut self) {
@@ -20,7 +20,7 @@ impl View {
         pool.canvas(buffer)
     }
 
-    pub(super) fn draw_frame(&mut self, qh: &QueueHandle<Self>) {
+    pub(super) fn draw_frame(&mut self, qh: &QueueHandle<Self>, damage: DirtyRect) {
         if self.window.is_none() || self.width == 0 || self.height == 0 {
             return;
         }
@@ -61,19 +61,16 @@ impl View {
         let window = self.window.as_ref().unwrap();
         let surface = window.wl_surface();
 
-        surface.damage_buffer(0, 0, width as i32, height as i32);
+        surface.damage_buffer(damage.x, damage.y, damage.width, damage.height);
         surface.frame(qh, surface.clone());
         buffer.attach_to(surface).expect("Failed to attach buffer");
         window.commit();
-
-        self.dirty = false;
     }
 
-    pub(super) fn clear_buffer(&mut self) {
-        if let Some(canvas) = self.canvas_mut() {
-            canvas.fill(0);
-            self.dirty = true;
-        }
+    pub(super) fn clear_buffer(&mut self) -> Option<DirtyRect> {
+        let canvas = self.canvas_mut()?;
+        canvas.fill(0);
+        Some(DirtyRect::full(self.width, self.height))
     }
 
     fn color_to_argb_le(color: Color) -> [u8; 4] {
@@ -150,25 +147,76 @@ impl View {
         }
     }
 
-    pub(super) fn render_line(&mut self, style: BrushStyle, radius: f64, from: Point, to: Point) {
-        let width = self.width;
-        let height = self.height;
-        if let Some(canvas) = self.canvas_mut() {
-            let pixel = Self::brush_pixel(style);
-            Self::stroke(
-                canvas, width, height, from.x, from.y, to.x, to.y, radius, pixel,
-            );
-            self.dirty = true;
+    fn circle_dirty_rect(cx: f64, cy: f64, radius: f64, width: u32, height: u32) -> DirtyRect {
+        let x = (cx - radius).floor().max(0.0) as i32;
+        let y = (cy - radius).floor().max(0.0) as i32;
+        let x1 = (cx + radius).ceil().min(width as f64) as i32;
+        let y1 = (cy + radius).ceil().min(height as f64) as i32;
+        DirtyRect {
+            x,
+            y,
+            width: (x1 - x).max(0),
+            height: (y1 - y).max(0),
         }
     }
 
-    pub(super) fn render_dot(&mut self, style: BrushStyle, radius: f64, center: Point) {
+    fn stroke_dirty_rect(
+        x0: f64,
+        y0: f64,
+        x1: f64,
+        y1: f64,
+        radius: f64,
+        width: u32,
+        height: u32,
+    ) -> DirtyRect {
+        let min_x = x0.min(x1) - radius;
+        let min_y = y0.min(y1) - radius;
+        let max_x = x0.max(x1) + radius;
+        let max_y = y0.max(y1) + radius;
+        let x = min_x.floor().max(0.0) as i32;
+        let y = min_y.floor().max(0.0) as i32;
+        let x1 = max_x.ceil().min(width as f64) as i32;
+        let y1 = max_y.ceil().min(height as f64) as i32;
+        DirtyRect {
+            x,
+            y,
+            width: (x1 - x).max(0),
+            height: (y1 - y).max(0),
+        }
+    }
+
+    pub(super) fn render_line(
+        &mut self,
+        style: BrushStyle,
+        radius: f64,
+        from: Point,
+        to: Point,
+    ) -> Option<DirtyRect> {
         let width = self.width;
         let height = self.height;
-        if let Some(canvas) = self.canvas_mut() {
-            let pixel = Self::brush_pixel(style);
-            Self::fill_circle(canvas, width, height, center.x, center.y, radius, pixel);
-            self.dirty = true;
-        }
+        let canvas = self.canvas_mut()?;
+        let pixel = Self::brush_pixel(style);
+        Self::stroke(
+            canvas, width, height, from.x, from.y, to.x, to.y, radius, pixel,
+        );
+        Some(Self::stroke_dirty_rect(
+            from.x, from.y, to.x, to.y, radius, width, height,
+        ))
+    }
+
+    pub(super) fn render_dot(
+        &mut self,
+        style: BrushStyle,
+        radius: f64,
+        center: Point,
+    ) -> Option<DirtyRect> {
+        let width = self.width;
+        let height = self.height;
+        let canvas = self.canvas_mut()?;
+        let pixel = Self::brush_pixel(style);
+        Self::fill_circle(canvas, width, height, center.x, center.y, radius, pixel);
+        Some(Self::circle_dirty_rect(
+            center.x, center.y, radius, width, height,
+        ))
     }
 }
