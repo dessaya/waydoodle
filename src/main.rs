@@ -1,7 +1,7 @@
 mod model;
-mod view_wayland;
+mod wayland;
 
 fn main() {
     env_logger::init();
-    view_wayland::View::run();
+    wayland::View::run();
 }
