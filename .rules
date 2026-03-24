@@ -77,3 +77,6 @@ annotate on the screen (e.g. for presentations).
   use std::sync::Arc;
   use std::sync::Mutex;
   ```
+
+- Avoid unwrap() or any other method that can panic. Instead, use proper error
+  handling with `Result` and `?`.

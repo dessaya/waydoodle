@@ -57,8 +57,11 @@ While the overlay is visible:
 | <kbd>g</kbd> | Green pen |
 | <kbd>b</kbd> | Blue pen |
 | <kbd>y</kbd> | Yellow pen |
+| <kbd>m</kbd> | Magenta pen |
+| <kbd>n</kbd> | Cyan pen |
 | <kbd>e</kbd> | Eraser |
 | <kbd>c</kbd> | Clear all |
+| <kbd>Esc</kbd> | Hide overlay |
 
 ## Global shortcut
 

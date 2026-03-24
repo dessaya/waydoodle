@@ -107,7 +107,7 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for View {
                 }
             }
             zwp_tablet_tool_v2::Event::Pressure { .. } => {}
-            zwp_tablet_tool_v2::Event::Frame { .. } => {} // TODO: commit surface on frame event instead of every motion event
+            zwp_tablet_tool_v2::Event::Frame { .. } => {}
             zwp_tablet_tool_v2::Event::Removed => {
                 if tablet.active_tool.as_ref().is_some_and(|a| &a.tool == tool) {
                     tablet.active_tool = None;

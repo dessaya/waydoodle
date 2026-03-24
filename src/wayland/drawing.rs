@@ -56,7 +56,7 @@ impl View {
             .buffer
             .attach_to(surface)
             .expect("Failed to attach buffer");
-        overlay.window.commit();
+        overlay.window.commit(); // TODO: commit surface on frame event instead of every motion event
     }
 
     pub(super) fn clear_buffer(&mut self) -> Option<DirtyRect> {

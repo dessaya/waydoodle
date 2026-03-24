@@ -68,6 +68,12 @@ pub struct Overlay {
     pub current_tool: Tool,
 }
 
+impl Default for Overlay {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Overlay {
     pub fn new() -> Self {
         Self {
@@ -127,6 +133,12 @@ pub struct Waydoodle {
     pub overlay: Option<Overlay>,
 }
 
+impl Default for Waydoodle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Waydoodle {
     pub fn new() -> Self {
         Self { overlay: None }
@@ -155,10 +167,10 @@ impl Waydoodle {
     /// No-op if the overlay is not active.
     pub fn reset_overlay(&mut self) -> Option<Command> {
         self.overlay.as_ref()?;
-        self.overlay = Some(Overlay::new());
-        Some(Command::SetCursorShape(
-            self.overlay.as_ref().unwrap().cursor_shape(),
-        ))
+        let overlay = Overlay::new();
+        let shape = overlay.cursor_shape();
+        self.overlay = Some(overlay);
+        Some(Command::SetCursorShape(shape))
     }
 }
 

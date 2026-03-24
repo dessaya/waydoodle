@@ -8,7 +8,7 @@ use smithay_client_toolkit::{
     seat::{
         Capability, SeatHandler, SeatState,
         keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers, RawModifiers},
-        pointer::{PointerEvent, PointerEventKind, PointerHandler},
+        pointer::{BTN_LEFT, PointerEvent, PointerEventKind, PointerHandler},
     },
     shell::{
         WaylandSurface,
@@ -26,8 +26,6 @@ use wayland_client::{
 
 use super::{DirtyRect, OverlayState, View, ViewOverlay};
 use crate::model::Point;
-
-const LEFT_BUTTON: u32 = 0x110;
 
 impl CompositorHandler for View {
     fn scale_factor_changed(
@@ -357,7 +355,9 @@ impl PointerHandler for View {
 
             match event.kind {
                 PointerEventKind::Enter { serial } => {
-                    let ptr = self.pointer.as_mut().unwrap();
+                    let Some(ptr) = self.pointer.as_mut() else {
+                        continue;
+                    };
                     ptr.enter_serial = serial;
                     ptr.pos = event.position;
                     if let Some(overlay) = self.model.overlay.as_ref() {
@@ -366,10 +366,15 @@ impl PointerHandler for View {
                     }
                 }
                 PointerEventKind::Leave { .. } => {
-                    self.pointer.as_mut().unwrap().pressed = false;
+                    let Some(ptr) = self.pointer.as_mut() else {
+                        continue;
+                    };
+                    ptr.pressed = false;
                 }
                 PointerEventKind::Motion { .. } => {
-                    let ptr = self.pointer.as_mut().unwrap();
+                    let Some(ptr) = self.pointer.as_mut() else {
+                        continue;
+                    };
                     let prev = ptr.pos;
                     ptr.pos = event.position;
 
@@ -389,8 +394,10 @@ impl PointerHandler for View {
                     }
                 }
                 PointerEventKind::Press { button, .. } => {
-                    if button == LEFT_BUTTON {
-                        let ptr = self.pointer.as_mut().unwrap();
+                    if button == BTN_LEFT {
+                        let Some(ptr) = self.pointer.as_mut() else {
+                            continue;
+                        };
                         ptr.pressed = true;
                         ptr.pos = event.position;
 
@@ -405,8 +412,11 @@ impl PointerHandler for View {
                     }
                 }
                 PointerEventKind::Release { button, .. } => {
-                    if button == LEFT_BUTTON {
-                        self.pointer.as_mut().unwrap().pressed = false;
+                    if button == BTN_LEFT {
+                        let Some(ptr) = self.pointer.as_mut() else {
+                            continue;
+                        };
+                        ptr.pressed = false;
                     }
                 }
                 PointerEventKind::Axis { .. } => {}

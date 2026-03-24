@@ -11,11 +11,11 @@ impl View {
     pub(super) fn dispatch_command(&mut self, qh: &QueueHandle<Self>, cmd: Command) {
         let damage = match cmd {
             Command::ShowOverlay => {
-                self.show_overlay(qh);
+                self.create_overlay(qh);
                 None
             }
             Command::HideOverlay => {
-                self.hide_overlay();
+                self.destroy_overlay();
                 None
             }
             Command::SetCursorShape(shape) => {
@@ -41,26 +41,24 @@ impl View {
         }
     }
 
-    fn show_overlay(&mut self, qh: &QueueHandle<Self>) {
-        if self.overlay.is_some() {
-            self.hide_overlay();
-        }
-
+    fn create_overlay(&mut self, qh: &QueueHandle<Self>) {
+        debug_assert!(
+            self.overlay.is_none(),
+            "create_overlay called while overlay already exists"
+        );
         let surface = self.wayland.compositor_state.create_surface(qh);
         let window = self
             .wayland
             .xdg_shell
             .create_window(surface, WindowDecorations::None, qh);
-
         window.set_title("Waydoodle");
         window.set_app_id("io.github.dessaya.waydoodle");
         window.set_maximized();
         window.commit();
-
         self.overlay = Some(OverlayState::Pending(window));
     }
 
-    pub(super) fn hide_overlay(&mut self) {
+    fn destroy_overlay(&mut self) {
         if let Some(state) = self.overlay.take() {
             let surface = state.window().wl_surface().clone();
             drop(state);
@@ -68,11 +66,7 @@ impl View {
         }
     }
 
-    pub(super) fn handle_key(
-        &mut self,
-        qh: &QueueHandle<Self>,
-        keysym: smithay_client_toolkit::seat::keyboard::Keysym,
-    ) {
+    pub(super) fn handle_key(&mut self, qh: &QueueHandle<Self>, keysym: Keysym) {
         let overlay = match self.model.overlay.as_mut() {
             Some(o) => o,
             None => return,
