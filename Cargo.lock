@@ -1242,7 +1242,7 @@ dependencies = [
 
 [[package]]
 name = "waydoodle"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "calloop",
  "env_logger",

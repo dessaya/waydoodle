@@ -50,7 +50,9 @@ struct WaylandState {
 pub(crate) struct ViewOverlay {
     pub window: Window,
     pub pool: SlotPool,
-    pub buffer: Buffer,
+    pub buffers: [Buffer; 2],
+    /// Index of the buffer currently attached to (owned by) the compositor.
+    pub front: usize,
     pub width: u32,
     pub height: u32,
     pub pending_damage: Option<DirtyRect>,
@@ -73,26 +75,12 @@ impl OverlayState {
 
 pub struct View {
     wayland: WaylandState,
-
-    // Input devices
     keyboard: Option<wl_keyboard::WlKeyboard>,
     cursors: Cursors,
-
-    // Tablet input
     tablet: Option<TabletState>,
-
-    // Overlay window state
     overlay: Option<OverlayState>,
-
-    // Pointer tracking
     pointer: Option<PointerState>,
-
-    // Tray
     tray_handle: Option<ksni::blocking::Handle<WaydoodleTray>>,
-
-    // Event loop
     loop_handle: calloop::LoopHandle<'static, Self>,
-
-    // Application model
     model: Waydoodle,
 }

@@ -10,7 +10,7 @@ impl View {
         };
         let width = overlay.width;
         let height = overlay.height;
-        let canvas = overlay.pool.canvas(&overlay.buffer)?;
+        let canvas = overlay.back_canvas()?;
         canvas.fill(0);
         Some(DirtyRect::full(width, height))
     }
@@ -127,7 +127,7 @@ impl View {
         };
         let width = overlay.width;
         let height = overlay.height;
-        let canvas = overlay.pool.canvas(&overlay.buffer)?;
+        let canvas = overlay.back_canvas()?;
         let pixel = Self::brush_pixel(style);
         Some(Self::stroke(canvas, width, height, from, to, radius, pixel))
     }
@@ -144,7 +144,7 @@ impl View {
         };
         let width = overlay.width;
         let height = overlay.height;
-        let canvas = overlay.pool.canvas(&overlay.buffer)?;
+        let canvas = overlay.back_canvas()?;
         let pixel = Self::brush_pixel(style);
         Some(Self::fill_circle(
             canvas, width, height, center, radius, pixel,

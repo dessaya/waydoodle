@@ -21,7 +21,7 @@ use smithay_client_toolkit::{
 };
 use wayland_client::{
     Connection, QueueHandle,
-    protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
+    protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_surface},
 };
 
 use super::{DirtyRect, OverlayState, View, ViewOverlay};
@@ -106,24 +106,15 @@ impl OutputHandler for View {
 }
 
 impl View {
-    pub(super) fn create_overlay_pool_and_buffer(
+    pub(super) fn create_overlay_pool_and_buffers(
         shm: &Shm,
         width: u32,
         height: u32,
-    ) -> (SlotPool, Buffer) {
-        let stride = width as i32 * 4;
-        let size = width as usize * height as usize * 4;
+    ) -> (SlotPool, [Buffer; 2]) {
+        let size = width as usize * height as usize * 4 * 2;
         let mut pool = SlotPool::new(size, shm).expect("Failed to create SHM slot pool");
-        let (buffer, canvas) = pool
-            .create_buffer(
-                width as i32,
-                height as i32,
-                stride,
-                wl_shm::Format::Argb8888,
-            )
-            .expect("Failed to create SHM buffer");
-        canvas.fill(0);
-        (pool, buffer)
+        let buffers = ViewOverlay::create_buffers(&mut pool, width, height);
+        (pool, buffers)
     }
 }
 
@@ -147,12 +138,13 @@ impl WindowHandler for View {
             OverlayState::Pending(window) => {
                 let width = configure.new_size.0.map(|v| v.get()).unwrap_or(1);
                 let height = configure.new_size.1.map(|v| v.get()).unwrap_or(1);
-                let (pool, buffer) =
-                    Self::create_overlay_pool_and_buffer(&self.wayland.shm, width, height);
+                let (pool, buffers) =
+                    Self::create_overlay_pool_and_buffers(&self.wayland.shm, width, height);
                 self.overlay = Some(OverlayState::Ready(ViewOverlay {
                     window,
                     pool,
-                    buffer,
+                    buffers,
+                    front: 0,
                     width,
                     height,
                     pending_damage: None,
@@ -173,13 +165,14 @@ impl WindowHandler for View {
                     .unwrap_or(overlay.height);
 
                 if new_width != overlay.width || new_height != overlay.height {
-                    let (pool, buffer) = Self::create_overlay_pool_and_buffer(
+                    let (pool, buffers) = Self::create_overlay_pool_and_buffers(
                         &self.wayland.shm,
                         new_width,
                         new_height,
                     );
                     overlay.pool = pool;
-                    overlay.buffer = buffer;
+                    overlay.buffers = buffers;
+                    overlay.front = 0;
                     overlay.width = new_width;
                     overlay.height = new_height;
 
