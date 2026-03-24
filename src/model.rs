@@ -14,6 +14,8 @@ pub enum Color {
     Green,
     Blue,
     Yellow,
+    Magenta,
+    Cyan,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,7 +127,7 @@ impl Waydoodle {
         Self { overlay: None }
     }
 
-    pub fn toggle_overlay(&mut self) -> Vec<Command> {
+    pub fn toggle_overlay(&mut self) -> Command {
         if self.overlay.is_some() {
             self.hide_overlay()
         } else {
@@ -133,16 +135,14 @@ impl Waydoodle {
         }
     }
 
-    pub fn show_overlay(&mut self) -> Vec<Command> {
-        let overlay = Overlay::new();
-        let cursor_cmd = overlay.cursor_command();
-        self.overlay = Some(overlay);
-        vec![Command::ShowOverlay, cursor_cmd]
+    pub fn show_overlay(&mut self) -> Command {
+        self.overlay = Some(Overlay::new());
+        Command::ShowOverlay
     }
 
-    pub fn hide_overlay(&mut self) -> Vec<Command> {
+    pub fn hide_overlay(&mut self) -> Command {
         self.overlay = None;
-        vec![Command::HideOverlay]
+        Command::HideOverlay
     }
 }
 
@@ -156,8 +156,12 @@ mod tests {
 
     #[test]
     fn overlay_defaults_to_red_pen() {
-        let overlay = Overlay::new();
-        assert_eq!(overlay.current_tool, Tool::Pen(Color::Red));
+        let mut app = Waydoodle::new();
+        app.show_overlay();
+        assert_eq!(
+            app.overlay.as_ref().unwrap().current_tool,
+            Tool::Pen(Color::Red)
+        );
     }
 
     #[test]
@@ -283,31 +287,26 @@ mod tests {
     #[test]
     fn toggle_overlay_on() {
         let mut app = Waydoodle::new();
-        let cmds = app.toggle_overlay();
+        let cmd = app.toggle_overlay();
         assert!(app.overlay.is_some());
-        assert_eq!(cmds.len(), 2);
-        assert_eq!(cmds[0], Command::ShowOverlay);
-        assert_eq!(cmds[1], Command::SetCrosshairCursor);
+        assert_eq!(cmd, Command::ShowOverlay);
     }
 
     #[test]
     fn toggle_overlay_off() {
         let mut app = Waydoodle::new();
         app.toggle_overlay();
-        let cmds = app.toggle_overlay();
+        let cmd = app.toggle_overlay();
         assert!(app.overlay.is_none());
-        assert_eq!(cmds, vec![Command::HideOverlay]);
+        assert_eq!(cmd, Command::HideOverlay);
     }
 
     #[test]
-    fn show_overlay_returns_show_and_cursor() {
+    fn show_overlay_returns_show() {
         let mut app = Waydoodle::new();
-        let cmds = app.show_overlay();
+        let cmd = app.show_overlay();
         assert!(app.overlay.is_some());
-        assert_eq!(
-            cmds,
-            vec![Command::ShowOverlay, Command::SetCrosshairCursor]
-        );
+        assert_eq!(cmd, Command::ShowOverlay);
     }
 
     #[test]
@@ -316,40 +315,37 @@ mod tests {
         app.show_overlay();
         app.overlay.as_mut().unwrap().current_tool = Tool::Eraser;
 
-        let cmds = app.show_overlay();
+        let cmd = app.show_overlay();
         assert_eq!(
             app.overlay.as_ref().unwrap().current_tool,
             Tool::Pen(Color::Red)
         );
-        assert_eq!(
-            cmds,
-            vec![Command::ShowOverlay, Command::SetCrosshairCursor]
-        );
+        assert_eq!(cmd, Command::ShowOverlay);
     }
 
     #[test]
     fn hide_overlay_returns_hide() {
         let mut app = Waydoodle::new();
         app.show_overlay();
-        let cmds = app.hide_overlay();
+        let cmd = app.hide_overlay();
         assert!(app.overlay.is_none());
-        assert_eq!(cmds, vec![Command::HideOverlay]);
+        assert_eq!(cmd, Command::HideOverlay);
     }
 
     #[test]
     fn hide_overlay_when_already_hidden() {
         let mut app = Waydoodle::new();
-        let cmds = app.hide_overlay();
+        let cmd = app.hide_overlay();
         assert!(app.overlay.is_none());
-        assert_eq!(cmds, vec![Command::HideOverlay]);
+        assert_eq!(cmd, Command::HideOverlay);
     }
 
     #[test]
     fn full_interaction_scenario() {
         let mut app = Waydoodle::new();
 
-        let cmds = app.toggle_overlay();
-        assert_eq!(cmds[0], Command::ShowOverlay);
+        let cmd = app.toggle_overlay();
+        assert_eq!(cmd, Command::ShowOverlay);
 
         let cmd = app.overlay.as_ref().unwrap().draw_dot(pt(100.0, 200.0));
         assert_eq!(
@@ -399,7 +395,7 @@ mod tests {
         let cmd = app.overlay.as_ref().unwrap().clear();
         assert_eq!(cmd, Command::ClearBuffer);
 
-        let cmds = app.toggle_overlay();
-        assert_eq!(cmds, vec![Command::HideOverlay]);
+        let cmd = app.toggle_overlay();
+        assert_eq!(cmd, Command::HideOverlay);
     }
 }

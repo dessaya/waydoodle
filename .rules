@@ -34,12 +34,10 @@ annotate on the screen (e.g. for presentations).
 
 - Whenever the overlay is visible, the app listens for key presses to change the current
   tool:
-  - r: red pen
-  - g: green pen
-  - b: blue pen
-  - y: yellow pen
+  - r, g, b, y, m, n: pen(red, green, blue, yellow, magenta, cyan)
   - e: eraser
   - c: clear (erase everything from the buffer)
+  - Esc: hide the overlay (same as toggling)
 
 - The overlay is a maximized window (not fullscreen) with no decorations. The Overlay
   object provides the pixel data for the entire window.

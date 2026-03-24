@@ -132,8 +132,8 @@ impl View {
         event_loop
             .handle()
             .insert_source(sigusr1, move |_, _, view| {
-                let cmds = view.model.toggle_overlay();
-                view.dispatch_commands(&qh_clone, cmds);
+                let cmd = view.model.toggle_overlay();
+                view.dispatch_command(&qh_clone, cmd);
             })
             .expect("Failed to insert signal source");
 
@@ -145,12 +145,6 @@ impl View {
             if view.exit {
                 break;
             }
-        }
-    }
-
-    fn dispatch_commands(&mut self, qh: &QueueHandle<Self>, cmds: Vec<Command>) {
-        for cmd in cmds {
-            self.dispatch_command(qh, cmd);
         }
     }
 
@@ -296,6 +290,8 @@ impl View {
             Color::Green => 0xFF00FF00,
             Color::Blue => 0xFF0000FF,
             Color::Yellow => 0xFFFFFF00,
+            Color::Magenta => 0xFFFF00FF,
+            Color::Cyan => 0xFF00FFFF,
         };
         argb.to_le_bytes()
     }
@@ -395,8 +391,11 @@ impl View {
             Keysym::g | Keysym::G => Some(overlay.set_tool(Tool::Pen(Color::Green))),
             Keysym::b | Keysym::B => Some(overlay.set_tool(Tool::Pen(Color::Blue))),
             Keysym::y | Keysym::Y => Some(overlay.set_tool(Tool::Pen(Color::Yellow))),
+            Keysym::m | Keysym::M => Some(overlay.set_tool(Tool::Pen(Color::Magenta))),
+            Keysym::n | Keysym::N => Some(overlay.set_tool(Tool::Pen(Color::Cyan))),
             Keysym::e | Keysym::E => Some(overlay.set_tool(Tool::Eraser)),
             Keysym::c | Keysym::C => Some(overlay.clear()),
+            Keysym::Escape => Some(self.model.hide_overlay()),
             _ => None,
         };
 

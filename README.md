@@ -9,7 +9,7 @@ or [Wayscriber](https://wayscriber.com/), Waydoodle provides only the essentials
 - Tray icon with menu
 - Global shortcut (see [below](#global-shortcut))
 - Draw with the mouse or tablet
-- Change color (<kbd>r</kbd>, <kbd>g</kbd>, <kbd>b</kbd>, <kbd>y</kbd>)
+- Change color (<kbd>r</kbd>, <kbd>g</kbd>, <kbd>b</kbd>, <kbd>y</kbd>, <kbd>m</kbd>, <kbd>n</kbd>)
 - Erase (<kbd>e</kbd>)
 - Clear (<kbd>c</kbd>)
 
