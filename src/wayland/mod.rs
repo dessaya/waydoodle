@@ -10,6 +10,7 @@ mod cursors;
 mod drawing;
 mod handlers;
 mod init;
+mod render;
 mod tablet;
 
 use smithay_client_toolkit::{
@@ -27,7 +28,7 @@ use wayland_client::protocol::{wl_keyboard, wl_pointer};
 
 use crate::{model::Waydoodle, tray::WaydoodleTray};
 use cursors::Cursors;
-use drawing::DirtyRect;
+use render::DirtyRect;
 use tablet::TabletState;
 
 pub(crate) struct PointerState {
@@ -52,6 +53,8 @@ pub(crate) struct ViewOverlay {
     pub buffer: Buffer,
     pub width: u32,
     pub height: u32,
+    pub pending_damage: Option<DirtyRect>,
+    pub frame_requested: bool,
 }
 
 pub(crate) enum OverlayState {

@@ -27,17 +27,17 @@ impl View {
                 radius,
                 from,
                 to,
-            } => self.render_line(style, radius, from, to),
+            } => self.draw_line(style, radius, from, to),
             Command::DrawDot {
                 style,
                 radius,
                 center,
-            } => self.render_dot(style, radius, center),
+            } => self.draw_dot(style, radius, center),
             Command::ClearBuffer => self.clear_buffer(),
         };
 
         if let Some(damage) = damage {
-            self.draw_frame(qh, damage);
+            self.mark_dirty(qh, damage);
         }
     }
 

@@ -1,64 +1,8 @@
-use smithay_client_toolkit::shell::WaylandSurface;
-use wayland_client::QueueHandle;
-
+use super::render::DirtyRect;
 use super::{OverlayState, View};
 use crate::model::{BrushStyle, Color, Point};
 
-#[derive(Clone, Copy)]
-pub(crate) struct DirtyRect {
-    pub x: i32,
-    pub y: i32,
-    pub width: i32,
-    pub height: i32,
-}
-
-impl DirtyRect {
-    pub fn full(width: u32, height: u32) -> Self {
-        Self {
-            x: 0,
-            y: 0,
-            width: width as i32,
-            height: height as i32,
-        }
-    }
-}
-
 impl View {
-    pub(super) fn draw_frame(&mut self, qh: &QueueHandle<Self>, damage: DirtyRect) {
-        let overlay = match self.overlay.as_mut() {
-            Some(OverlayState::Ready(o)) => o,
-            _ => return,
-        };
-
-        let width = overlay.width;
-        let height = overlay.height;
-        let stride = width as i32 * 4;
-
-        if overlay.pool.canvas(&overlay.buffer).is_none() {
-            let (new_buffer, canvas) = overlay
-                .pool
-                .create_buffer(
-                    width as i32,
-                    height as i32,
-                    stride,
-                    wayland_client::protocol::wl_shm::Format::Argb8888,
-                )
-                .expect("Failed to create SHM buffer");
-            canvas.fill(0);
-            overlay.buffer = new_buffer;
-        }
-
-        let surface = overlay.window.wl_surface();
-
-        surface.damage_buffer(damage.x, damage.y, damage.width, damage.height);
-        surface.frame(qh, surface.clone());
-        overlay
-            .buffer
-            .attach_to(surface)
-            .expect("Failed to attach buffer");
-        overlay.window.commit(); // TODO: commit surface on frame event instead of every motion event
-    }
-
     pub(super) fn clear_buffer(&mut self) -> Option<DirtyRect> {
         let overlay = match self.overlay.as_mut() {
             Some(OverlayState::Ready(o)) => o,
@@ -170,7 +114,7 @@ impl View {
         }
     }
 
-    pub(super) fn render_line(
+    pub(super) fn draw_line(
         &mut self,
         style: BrushStyle,
         radius: f64,
@@ -188,7 +132,7 @@ impl View {
         Some(Self::stroke(canvas, width, height, from, to, radius, pixel))
     }
 
-    pub(super) fn render_dot(
+    pub(super) fn draw_dot(
         &mut self,
         style: BrushStyle,
         radius: f64,

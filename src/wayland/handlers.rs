@@ -49,10 +49,11 @@ impl CompositorHandler for View {
     fn frame(
         &mut self,
         _conn: &Connection,
-        _qh: &QueueHandle<Self>,
+        qh: &QueueHandle<Self>,
         _surface: &wl_surface::WlSurface,
         _time: u32,
     ) {
+        self.on_frame_callback(qh);
     }
 
     fn surface_enter(
@@ -154,8 +155,10 @@ impl WindowHandler for View {
                     buffer,
                     width,
                     height,
+                    pending_damage: None,
+                    frame_requested: false,
                 }));
-                self.draw_frame(qh, DirtyRect::full(width, height));
+                self.mark_dirty(qh, DirtyRect::full(width, height));
             }
             OverlayState::Ready(mut overlay) => {
                 let new_width = configure
@@ -186,7 +189,7 @@ impl WindowHandler for View {
                 }
 
                 self.overlay = Some(OverlayState::Ready(overlay));
-                self.draw_frame(qh, DirtyRect::full(new_width, new_height));
+                self.mark_dirty(qh, DirtyRect::full(new_width, new_height));
             }
         }
     }
