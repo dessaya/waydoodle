@@ -36,12 +36,17 @@ pub enum BrushStyle {
     Erase,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CursorShape {
+    Crosshair,
+    Circle,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Command {
     ShowOverlay,
     HideOverlay,
-    SetCrosshairCursor,
-    SetCircleCursor,
+    SetCursorShape(CursorShape),
     DrawLine {
         style: BrushStyle,
         radius: f64,
@@ -72,13 +77,13 @@ impl Overlay {
 
     pub fn set_tool(&mut self, tool: Tool) -> Command {
         self.current_tool = tool;
-        self.cursor_command()
+        Command::SetCursorShape(self.cursor_shape())
     }
 
-    pub fn cursor_command(&self) -> Command {
+    pub fn cursor_shape(&self) -> CursorShape {
         match self.current_tool {
-            Tool::Pen(_) => Command::SetCrosshairCursor,
-            Tool::Eraser => Command::SetCircleCursor,
+            Tool::Pen(_) => CursorShape::Crosshair,
+            Tool::Eraser => CursorShape::Circle,
         }
     }
 
@@ -169,28 +174,28 @@ mod tests {
         let mut overlay = Overlay::new();
 
         let cmd = overlay.set_tool(Tool::Pen(Color::Blue));
-        assert_eq!(cmd, Command::SetCrosshairCursor);
+        assert_eq!(cmd, Command::SetCursorShape(CursorShape::Crosshair));
         assert_eq!(overlay.current_tool, Tool::Pen(Color::Blue));
 
         let cmd = overlay.set_tool(Tool::Eraser);
-        assert_eq!(cmd, Command::SetCircleCursor);
+        assert_eq!(cmd, Command::SetCursorShape(CursorShape::Circle));
         assert_eq!(overlay.current_tool, Tool::Eraser);
 
         let cmd = overlay.set_tool(Tool::Pen(Color::Green));
-        assert_eq!(cmd, Command::SetCrosshairCursor);
+        assert_eq!(cmd, Command::SetCursorShape(CursorShape::Crosshair));
         assert_eq!(overlay.current_tool, Tool::Pen(Color::Green));
     }
 
     #[test]
-    fn cursor_command_reflects_tool() {
+    fn cursor_shape_reflects_tool() {
         let mut overlay = Overlay::new();
-        assert_eq!(overlay.cursor_command(), Command::SetCrosshairCursor);
+        assert_eq!(overlay.cursor_shape(), CursorShape::Crosshair);
 
         overlay.current_tool = Tool::Eraser;
-        assert_eq!(overlay.cursor_command(), Command::SetCircleCursor);
+        assert_eq!(overlay.cursor_shape(), CursorShape::Circle);
 
         overlay.current_tool = Tool::Pen(Color::Yellow);
-        assert_eq!(overlay.cursor_command(), Command::SetCrosshairCursor);
+        assert_eq!(overlay.cursor_shape(), CursorShape::Crosshair);
     }
 
     #[test]
@@ -362,7 +367,7 @@ mod tests {
             .as_mut()
             .unwrap()
             .set_tool(Tool::Pen(Color::Blue));
-        assert_eq!(cmd, Command::SetCrosshairCursor);
+        assert_eq!(cmd, Command::SetCursorShape(CursorShape::Crosshair));
 
         let cmd = app
             .overlay
@@ -380,7 +385,7 @@ mod tests {
         );
 
         let cmd = app.overlay.as_mut().unwrap().set_tool(Tool::Eraser);
-        assert_eq!(cmd, Command::SetCircleCursor);
+        assert_eq!(cmd, Command::SetCursorShape(CursorShape::Circle));
 
         let cmd = app.overlay.as_ref().unwrap().draw_dot(pt(120.0, 200.0));
         assert_eq!(

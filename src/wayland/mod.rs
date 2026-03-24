@@ -47,9 +47,8 @@ pub struct View {
     // Input devices
     keyboard: Option<wl_keyboard::WlKeyboard>,
     pointer: Option<wl_pointer::WlPointer>,
-    cursor_shape_manager: Option<CursorShapeManager>,
-    pointer_enter_serial: u32,
-    eraser_cursor: Option<cursor::Cursor>,
+    cursor_shape_manager: CursorShapeManager,
+    eraser_cursor: cursor::Cursor,
     tablet_cursor: Option<cursor::TabletCursorState>,
 
     // Tablet input
@@ -70,6 +69,7 @@ pub struct View {
     dirty: bool,
 
     // Pointer tracking
+    pointer_enter_serial: u32,
     pointer_pos: (f64, f64),
     pointer_pressed: bool,
 
@@ -81,5 +81,4 @@ pub struct View {
 
     // Event loop
     loop_handle: calloop::LoopHandle<'static, Self>,
-    exit: bool,
 }

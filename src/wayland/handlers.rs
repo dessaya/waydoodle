@@ -106,9 +106,7 @@ impl OutputHandler for View {
 }
 
 impl WindowHandler for View {
-    fn request_close(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _window: &Window) {
-        self.exit = true;
-    }
+    fn request_close(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _window: &Window) {}
 
     fn configure(
         &mut self,
@@ -295,7 +293,10 @@ impl PointerHandler for View {
                 PointerEventKind::Enter { serial } => {
                     self.pointer_enter_serial = serial;
                     self.pointer_pos = event.position;
-                    self.apply_current_cursor(qh);
+                    if let Some(overlay) = self.model.overlay.as_ref() {
+                        let shape = overlay.cursor_shape();
+                        self.apply_cursor(shape, qh);
+                    }
                 }
                 PointerEventKind::Leave { .. } => {
                     self.pointer_pressed = false;

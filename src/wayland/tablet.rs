@@ -1,3 +1,4 @@
+use wayland_client::delegate_noop;
 use wayland_client::event_created_child;
 use wayland_client::{Connection, Dispatch, QueueHandle};
 use wayland_protocols::wp::tablet::zv2::client::{
@@ -10,17 +11,7 @@ use crate::model::Point;
 
 use super::View;
 
-impl Dispatch<zwp_tablet_manager_v2::ZwpTabletManagerV2, ()> for View {
-    fn event(
-        _state: &mut Self,
-        _proxy: &zwp_tablet_manager_v2::ZwpTabletManagerV2,
-        _event: zwp_tablet_manager_v2::Event,
-        _data: &(),
-        _conn: &Connection,
-        _qh: &QueueHandle<Self>,
-    ) {
-    }
-}
+delegate_noop!(View: ignore zwp_tablet_manager_v2::ZwpTabletManagerV2);
 
 impl Dispatch<zwp_tablet_seat_v2::ZwpTabletSeatV2, ()> for View {
     event_created_child!(View, zwp_tablet_seat_v2::ZwpTabletSeatV2, [
@@ -32,23 +23,11 @@ impl Dispatch<zwp_tablet_seat_v2::ZwpTabletSeatV2, ()> for View {
     fn event(
         _state: &mut Self,
         _proxy: &zwp_tablet_seat_v2::ZwpTabletSeatV2,
-        event: zwp_tablet_seat_v2::Event,
+        _event: zwp_tablet_seat_v2::Event,
         _data: &(),
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-        match event {
-            zwp_tablet_seat_v2::Event::ToolAdded { id: _ } => {
-                log::info!("Tablet tool added");
-            }
-            zwp_tablet_seat_v2::Event::TabletAdded { id: _ } => {
-                log::info!("Tablet added");
-            }
-            zwp_tablet_seat_v2::Event::PadAdded { id: _ } => {
-                log::info!("Tablet pad added");
-            }
-            _ => {}
-        }
     }
 }
 
@@ -69,7 +48,10 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for View {
             } => {
                 state.tablet_tool_serial = serial;
                 state.tablet_tool = Some(tool.clone());
-                state.apply_tablet_cursor(qh);
+                if let Some(overlay) = state.model.overlay.as_ref() {
+                    let shape = overlay.cursor_shape();
+                    state.apply_cursor(shape, qh);
+                }
             }
             zwp_tablet_tool_v2::Event::ProximityOut => {
                 state.tablet_pressed = false;
@@ -169,26 +151,5 @@ impl Dispatch<zwp_tablet_pad_group_v2::ZwpTabletPadGroupV2, ()> for View {
     }
 }
 
-impl Dispatch<zwp_tablet_pad_ring_v2::ZwpTabletPadRingV2, ()> for View {
-    fn event(
-        _state: &mut Self,
-        _proxy: &zwp_tablet_pad_ring_v2::ZwpTabletPadRingV2,
-        _event: zwp_tablet_pad_ring_v2::Event,
-        _data: &(),
-        _conn: &Connection,
-        _qh: &QueueHandle<Self>,
-    ) {
-    }
-}
-
-impl Dispatch<zwp_tablet_pad_strip_v2::ZwpTabletPadStripV2, ()> for View {
-    fn event(
-        _state: &mut Self,
-        _proxy: &zwp_tablet_pad_strip_v2::ZwpTabletPadStripV2,
-        _event: zwp_tablet_pad_strip_v2::Event,
-        _data: &(),
-        _conn: &Connection,
-        _qh: &QueueHandle<Self>,
-    ) {
-    }
-}
+delegate_noop!(View: ignore zwp_tablet_pad_ring_v2::ZwpTabletPadRingV2);
+delegate_noop!(View: ignore zwp_tablet_pad_strip_v2::ZwpTabletPadStripV2);

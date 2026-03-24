@@ -73,6 +73,8 @@ impl View {
             }
         };
 
+        let eraser_cursor = View::create_eraser_cursor(&compositor_state, &shm, &qh);
+
         let mut view = View {
             registry_state: RegistryState::new(&globals),
             seat_state: SeatState::new(&globals, &qh),
@@ -83,9 +85,10 @@ impl View {
 
             keyboard: None,
             pointer: None,
-            cursor_shape_manager: CursorShapeManager::bind(&globals, &qh).ok(),
+            cursor_shape_manager: CursorShapeManager::bind(&globals, &qh)
+                .expect("cursor shape manager not available"),
             pointer_enter_serial: 0,
-            eraser_cursor: None,
+            eraser_cursor,
             tablet_cursor,
 
             tablet_manager,
@@ -111,48 +114,46 @@ impl View {
             tray_handle,
 
             loop_handle: event_loop.handle(),
-            exit: false,
         };
 
         // Handle SIGUSR1 to toggle the overlay.
-        let qh_clone = qh.clone();
-        event_loop
-            .handle()
-            .insert_source(sigusr1, move |_, _, view| {
-                let cmd = view.model.toggle_overlay();
-                view.dispatch_command(&qh_clone, cmd);
-            })
-            .expect("Failed to insert signal source");
+        {
+            let qh_clone = qh.clone();
+            event_loop
+                .handle()
+                .insert_source(sigusr1, move |_, _, view| {
+                    let cmd = view.model.toggle_overlay();
+                    view.dispatch_command(&qh_clone, cmd);
+                })
+                .expect("Failed to insert signal source");
+        }
 
         // Register the tray event channel.
-        let qh_tray = qh.clone();
-        event_loop
-            .handle()
-            .insert_source(tray_channel, move |event, _, view| {
-                let calloop::channel::Event::Msg(tray_event) = event else {
-                    return;
-                };
-                match tray_event {
-                    TrayEvent::ToggleOverlay => {
-                        let cmd = view.model.toggle_overlay();
-                        view.dispatch_command(&qh_tray, cmd);
-                    }
-                    TrayEvent::Quit => {
-                        view.exit = true;
-                    }
-                }
-            })
-            .expect("Failed to insert tray event source");
-
-        loop {
+        {
+            let loop_signal = event_loop.get_signal();
+            let qh_tray = qh.clone();
             event_loop
-                .dispatch(Duration::from_millis(16), &mut view)
-                .expect("Event loop dispatch failed");
-
-            if view.exit {
-                break;
-            }
+                .handle()
+                .insert_source(tray_channel, move |event, _, view| {
+                    let calloop::channel::Event::Msg(tray_event) = event else {
+                        return;
+                    };
+                    match tray_event {
+                        TrayEvent::ToggleOverlay => {
+                            let cmd = view.model.toggle_overlay();
+                            view.dispatch_command(&qh_tray, cmd);
+                        }
+                        TrayEvent::Quit => {
+                            loop_signal.stop();
+                        }
+                    }
+                })
+                .expect("Failed to insert tray event source");
         }
+
+        event_loop
+            .run(Duration::from_millis(16), &mut view, |_| {})
+            .expect("Event loop failed");
 
         // Shut down the tray service on exit.
         if let Some(handle) = view.tray_handle.take() {
