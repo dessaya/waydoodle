@@ -16,7 +16,7 @@ annotate on the screen (e.g. for presentations).
     buffer: [width * height * 4]u8 = [0x00000000] // ARGB pixel data
   }
   Tool = Pen(Color) | Eraser
-  Color = Red | Green | Blue | Yellow
+  Color = Red | Green | Blue | Yellow | ...
   ```
 
 - The app shows a tray icon with the `waydoodle` icon. The menu has 2
@@ -49,7 +49,7 @@ annotate on the screen (e.g. for presentations).
 
 - Whenever the mouse is moved with left button pressed, or the tablet stylus is moved with pressure > 0, draw on the buffer
   using the current tool:
-  - Pen: draw a line from the previous position to the current position, using the current color and a thickness of 5 pixels
+  - Pen: draw a line from the previous position to the current position, using the current color and a thickness of 3 pixels
   - Eraser: draw a filled circle with radius 10 at the current position, using transparent color (i.e. erase)
   Note: the pen pressure does not affect the thickness of the stroke.
 

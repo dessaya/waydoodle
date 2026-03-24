@@ -25,6 +25,7 @@ use smithay_client_toolkit::{
 use wayland_client::protocol::{wl_keyboard, wl_pointer};
 
 use crate::model::Waydoodle;
+use crate::tray::WaydoodleTray;
 
 use smithay_client_toolkit::shell::xdg::window::Window;
 
@@ -61,6 +62,9 @@ pub struct View {
 
     // Application model
     model: Waydoodle,
+
+    // Tray
+    tray_handle: Option<ksni::blocking::Handle<WaydoodleTray>>,
 
     // Event loop
     loop_handle: calloop::LoopHandle<'static, Self>,

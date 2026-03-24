@@ -4,22 +4,17 @@ use calloop::signals::{Signal, Signals};
 use smithay_client_toolkit::{
     compositor::CompositorState,
     output::OutputState,
-    registry::RegistryState,
     reexports::calloop::EventLoop,
     reexports::calloop_wayland_source::WaylandSource,
-    seat::{
-        SeatState,
-        pointer::cursor_shape::CursorShapeManager,
-    },
+    registry::RegistryState,
+    seat::{SeatState, pointer::cursor_shape::CursorShapeManager},
     shell::xdg::XdgShell,
     shm::Shm,
 };
-use wayland_client::{
-    Connection,
-    globals::registry_queue_init,
-};
+use wayland_client::{Connection, globals::registry_queue_init};
 
 use crate::model::Waydoodle;
+use crate::tray::{TrayEvent, WaydoodleTray};
 
 use super::View;
 
@@ -42,6 +37,22 @@ impl View {
             CompositorState::bind(&globals, &qh).expect("wl_compositor not available");
         let xdg_shell = XdgShell::bind(&globals, &qh).expect("xdg_wm_base not available");
         let shm = Shm::bind(&globals, &qh).expect("wl_shm not available");
+
+        // Set up the calloop channel for tray events.
+        let (tray_sender, tray_channel) = calloop::channel::channel::<TrayEvent>();
+
+        // Spawn the tray service on a background thread.
+        let tray = WaydoodleTray::new(tray_sender);
+        let tray_handle = match ksni::blocking::TrayMethods::spawn(tray) {
+            Ok(handle) => {
+                log::info!("Tray service started");
+                Some(handle)
+            }
+            Err(err) => {
+                log::warn!("Failed to start tray service: {err}");
+                None
+            }
+        };
 
         let mut view = View {
             registry_state: RegistryState::new(&globals),
@@ -70,6 +81,8 @@ impl View {
 
             model: Waydoodle::new(),
 
+            tray_handle,
+
             loop_handle: event_loop.handle(),
             exit: false,
         };
@@ -85,6 +98,26 @@ impl View {
             })
             .expect("Failed to insert signal source");
 
+        // Register the tray event channel.
+        let qh_tray = qh.clone();
+        event_loop
+            .handle()
+            .insert_source(tray_channel, move |event, _, view| {
+                let calloop::channel::Event::Msg(tray_event) = event else {
+                    return;
+                };
+                match tray_event {
+                    TrayEvent::ToggleOverlay => {
+                        let cmd = view.model.toggle_overlay();
+                        view.dispatch_command(&qh_tray, cmd);
+                    }
+                    TrayEvent::Quit => {
+                        view.exit = true;
+                    }
+                }
+            })
+            .expect("Failed to insert tray event source");
+
         loop {
             event_loop
                 .dispatch(Duration::from_millis(16), &mut view)
@@ -93,6 +126,11 @@ impl View {
             if view.exit {
                 break;
             }
+        }
+
+        // Shut down the tray service on exit.
+        if let Some(handle) = view.tray_handle.take() {
+            handle.shutdown();
         }
     }
 }
