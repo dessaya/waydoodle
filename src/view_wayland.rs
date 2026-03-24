@@ -7,6 +7,7 @@
 
 use std::time::Duration;
 
+use calloop::signals::{Signal, Signals};
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
     delegate_compositor, delegate_keyboard, delegate_output, delegate_pointer, delegate_registry,
@@ -125,9 +126,16 @@ impl View {
             exit: false,
         };
 
-        // Start with the overlay visible.
-        let cmds = view.model.show_overlay();
-        view.dispatch_commands(&qh, cmds);
+        // Register SIGUSR1 handler to toggle the overlay.
+        let sigusr1 = Signals::new(&[Signal::SIGUSR1]).expect("Failed to register SIGUSR1");
+        let qh_clone = qh.clone();
+        event_loop
+            .handle()
+            .insert_source(sigusr1, move |_, _, view| {
+                let cmds = view.model.toggle_overlay();
+                view.dispatch_commands(&qh_clone, cmds);
+            })
+            .expect("Failed to insert signal source");
 
         loop {
             event_loop
@@ -200,7 +208,9 @@ impl View {
 
     fn hide_overlay(&mut self) {
         if let Some(window) = self.window.take() {
-            window.wl_surface().destroy();
+            let surface = window.wl_surface().clone();
+            drop(window);
+            surface.destroy();
         }
         self.buffer = None;
         self.pool = None;

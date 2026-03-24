@@ -54,7 +54,7 @@ pub enum Command {
     ClearBuffer,
 }
 
-pub const PEN_RADIUS: f64 = 2.5;
+pub const PEN_RADIUS: f64 = 1.5;
 pub const ERASER_RADIUS: f64 = 10.0;
 
 pub struct Overlay {
