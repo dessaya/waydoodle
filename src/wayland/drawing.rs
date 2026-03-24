@@ -1,76 +1,74 @@
-use smithay_client_toolkit::{shell::WaylandSurface, shm::slot::SlotPool};
-use wayland_client::{QueueHandle, protocol::wl_shm};
+use smithay_client_toolkit::shell::WaylandSurface;
+use wayland_client::QueueHandle;
 
-use super::{DirtyRect, View};
+use super::{OverlayState, View};
 use crate::model::{BrushStyle, Color, Point};
 
+#[derive(Clone, Copy)]
+pub(crate) struct DirtyRect {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+impl DirtyRect {
+    pub fn full(width: u32, height: u32) -> Self {
+        Self {
+            x: 0,
+            y: 0,
+            width: width as i32,
+            height: height as i32,
+        }
+    }
+}
+
 impl View {
-    pub(super) fn ensure_pool(&mut self) {
-        if self.pool.is_none() && self.width > 0 && self.height > 0 {
-            let size = self.width as usize * self.height as usize * 4;
-            self.pool = Some(
-                SlotPool::new(size, &self.wayland.shm).expect("Failed to create SHM slot pool"),
-            );
-        }
-    }
-
-    pub(super) fn canvas_mut(&mut self) -> Option<&mut [u8]> {
-        let buffer = self.buffer.as_ref()?;
-        let pool = self.pool.as_mut()?;
-        pool.canvas(buffer)
-    }
-
     pub(super) fn draw_frame(&mut self, qh: &QueueHandle<Self>, damage: DirtyRect) {
-        if self.window.is_none() || self.width == 0 || self.height == 0 {
-            return;
-        }
+        let overlay = match self.overlay.as_mut() {
+            Some(OverlayState::Ready(o)) => o,
+            _ => return,
+        };
 
-        self.ensure_pool();
-
-        let width = self.width;
-        let height = self.height;
+        let width = overlay.width;
+        let height = overlay.height;
         let stride = width as i32 * 4;
-        let pool = self.pool.as_mut().unwrap();
 
-        let buffer = self.buffer.get_or_insert_with(|| {
-            let (buf, canvas) = pool
+        if overlay.pool.canvas(&overlay.buffer).is_none() {
+            let (new_buffer, canvas) = overlay
+                .pool
                 .create_buffer(
                     width as i32,
                     height as i32,
                     stride,
-                    wl_shm::Format::Argb8888,
+                    wayland_client::protocol::wl_shm::Format::Argb8888,
                 )
                 .expect("Failed to create SHM buffer");
             canvas.fill(0);
-            buf
-        });
-
-        if pool.canvas(buffer).is_none() {
-            let (new_buffer, canvas) = pool
-                .create_buffer(
-                    width as i32,
-                    height as i32,
-                    stride,
-                    wl_shm::Format::Argb8888,
-                )
-                .expect("Failed to create SHM buffer");
-            canvas.fill(0);
-            *buffer = new_buffer;
+            overlay.buffer = new_buffer;
         }
 
-        let window = self.window.as_ref().unwrap();
-        let surface = window.wl_surface();
+        let surface = overlay.window.wl_surface();
 
         surface.damage_buffer(damage.x, damage.y, damage.width, damage.height);
         surface.frame(qh, surface.clone());
-        buffer.attach_to(surface).expect("Failed to attach buffer");
-        window.commit();
+        overlay
+            .buffer
+            .attach_to(surface)
+            .expect("Failed to attach buffer");
+        overlay.window.commit();
     }
 
     pub(super) fn clear_buffer(&mut self) -> Option<DirtyRect> {
-        let canvas = self.canvas_mut()?;
+        let overlay = match self.overlay.as_mut() {
+            Some(OverlayState::Ready(o)) => o,
+            _ => return None,
+        };
+        let width = overlay.width;
+        let height = overlay.height;
+        let canvas = overlay.pool.canvas(&overlay.buffer)?;
         canvas.fill(0);
-        Some(DirtyRect::full(self.width, self.height))
+        Some(DirtyRect::full(width, height))
     }
 
     fn color_to_argb_le(color: Color) -> [u8; 4] {
@@ -179,9 +177,13 @@ impl View {
         from: Point,
         to: Point,
     ) -> Option<DirtyRect> {
-        let width = self.width;
-        let height = self.height;
-        let canvas = self.canvas_mut()?;
+        let overlay = match self.overlay.as_mut() {
+            Some(OverlayState::Ready(o)) => o,
+            _ => return None,
+        };
+        let width = overlay.width;
+        let height = overlay.height;
+        let canvas = overlay.pool.canvas(&overlay.buffer)?;
         let pixel = Self::brush_pixel(style);
         Some(Self::stroke(canvas, width, height, from, to, radius, pixel))
     }
@@ -192,9 +194,13 @@ impl View {
         radius: f64,
         center: Point,
     ) -> Option<DirtyRect> {
-        let width = self.width;
-        let height = self.height;
-        let canvas = self.canvas_mut()?;
+        let overlay = match self.overlay.as_mut() {
+            Some(OverlayState::Ready(o)) => o,
+            _ => return None,
+        };
+        let width = overlay.width;
+        let height = overlay.height;
+        let canvas = overlay.pool.canvas(&overlay.buffer)?;
         let pixel = Self::brush_pixel(style);
         Some(Self::fill_circle(
             canvas, width, height, center, radius, pixel,

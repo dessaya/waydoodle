@@ -6,7 +6,22 @@ use wayland_protocols::wp::tablet::zv2::client::{
 };
 
 use super::View;
+use super::cursors::TabletCursorState;
 use crate::model::Point;
+
+pub(crate) struct ActiveTabletTool {
+    pub tool: zwp_tablet_tool_v2::ZwpTabletToolV2,
+    pub serial: u32,
+}
+
+pub(crate) struct TabletState {
+    pub manager: zwp_tablet_manager_v2::ZwpTabletManagerV2,
+    pub seat: Option<zwp_tablet_seat_v2::ZwpTabletSeatV2>,
+    pub cursor: TabletCursorState,
+    pub active_tool: Option<ActiveTabletTool>,
+    pub pos: (f64, f64),
+    pub pressed: bool,
+}
 
 delegate_noop!(View: ignore zwp_tablet_manager_v2::ZwpTabletManagerV2);
 
@@ -37,42 +52,49 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for View {
         _conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
+        let tablet = match state.tablet.as_mut() {
+            Some(t) => t,
+            None => return,
+        };
+
         match event {
             zwp_tablet_tool_v2::Event::ProximityIn {
                 serial,
                 tablet: _,
                 surface: _,
             } => {
-                state.tablet_tool_serial = serial;
-                state.tablet_tool = Some(tool.clone());
+                tablet.active_tool = Some(ActiveTabletTool {
+                    tool: tool.clone(),
+                    serial,
+                });
                 if let Some(overlay) = state.model.overlay.as_ref() {
                     let shape = overlay.cursor_shape();
                     state.apply_cursor(shape, qh);
                 }
             }
             zwp_tablet_tool_v2::Event::ProximityOut => {
-                state.tablet_pressed = false;
+                tablet.pressed = false;
             }
             zwp_tablet_tool_v2::Event::Down { .. } => {
-                state.tablet_pressed = true;
+                tablet.pressed = true;
 
                 if let Some(overlay) = state.model.overlay.as_ref() {
                     let center = Point {
-                        x: state.tablet_pos.0,
-                        y: state.tablet_pos.1,
+                        x: tablet.pos.0,
+                        y: tablet.pos.1,
                     };
                     let cmd = overlay.draw_dot(center);
                     state.dispatch_command(qh, cmd);
                 }
             }
             zwp_tablet_tool_v2::Event::Up => {
-                state.tablet_pressed = false;
+                tablet.pressed = false;
             }
             zwp_tablet_tool_v2::Event::Motion { x, y } => {
-                let prev = state.tablet_pos;
-                state.tablet_pos = (x, y);
+                let prev = tablet.pos;
+                tablet.pos = (x, y);
 
-                if state.tablet_pressed
+                if tablet.pressed
                     && let Some(overlay) = state.model.overlay.as_ref()
                 {
                     let from = Point {
@@ -87,8 +109,8 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for View {
             zwp_tablet_tool_v2::Event::Pressure { .. } => {}
             zwp_tablet_tool_v2::Event::Frame { .. } => {}
             zwp_tablet_tool_v2::Event::Removed => {
-                if state.tablet_tool.as_ref().is_some_and(|t| t == tool) {
-                    state.tablet_tool = None;
+                if tablet.active_tool.as_ref().is_some_and(|a| &a.tool == tool) {
+                    tablet.active_tool = None;
                 }
                 tool.destroy();
             }

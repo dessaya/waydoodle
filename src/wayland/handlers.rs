@@ -14,14 +14,17 @@ use smithay_client_toolkit::{
         WaylandSurface,
         xdg::window::{Window, WindowConfigure, WindowHandler},
     },
-    shm::{Shm, ShmHandler},
+    shm::{
+        Shm, ShmHandler,
+        slot::{Buffer, SlotPool},
+    },
 };
 use wayland_client::{
     Connection, QueueHandle,
-    protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_surface},
+    protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
 };
 
-use super::{DirtyRect, View};
+use super::{DirtyRect, OverlayState, View, ViewOverlay};
 use crate::model::Point;
 
 const LEFT_BUTTON: u32 = 0x110;
@@ -103,6 +106,28 @@ impl OutputHandler for View {
     }
 }
 
+impl View {
+    pub(super) fn create_overlay_pool_and_buffer(
+        shm: &Shm,
+        width: u32,
+        height: u32,
+    ) -> (SlotPool, Buffer) {
+        let stride = width as i32 * 4;
+        let size = width as usize * height as usize * 4;
+        let mut pool = SlotPool::new(size, shm).expect("Failed to create SHM slot pool");
+        let (buffer, canvas) = pool
+            .create_buffer(
+                width as i32,
+                height as i32,
+                stride,
+                wl_shm::Format::Argb8888,
+            )
+            .expect("Failed to create SHM buffer");
+        canvas.fill(0);
+        (pool, buffer)
+    }
+}
+
 impl WindowHandler for View {
     fn request_close(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _window: &Window) {}
 
@@ -114,21 +139,54 @@ impl WindowHandler for View {
         configure: WindowConfigure,
         _serial: u32,
     ) {
-        let new_width = configure.new_size.0.map(|v| v.get()).unwrap_or(self.width);
-        let new_height = configure.new_size.1.map(|v| v.get()).unwrap_or(self.height);
+        let state = match self.overlay.take() {
+            Some(s) => s,
+            None => return,
+        };
 
-        if new_width != self.width || new_height != self.height {
-            self.width = new_width;
-            self.height = new_height;
-            self.buffer = None;
-            self.pool = None;
+        match state {
+            OverlayState::Pending(window) => {
+                let width = configure.new_size.0.map(|v| v.get()).unwrap_or(1);
+                let height = configure.new_size.1.map(|v| v.get()).unwrap_or(1);
+                let (pool, buffer) =
+                    Self::create_overlay_pool_and_buffer(&self.wayland.shm, width, height);
+                self.overlay = Some(OverlayState::Ready(ViewOverlay {
+                    window,
+                    pool,
+                    buffer,
+                    width,
+                    height,
+                }));
+                self.draw_frame(qh, DirtyRect::full(width, height));
+            }
+            OverlayState::Ready(mut overlay) => {
+                let new_width = configure
+                    .new_size
+                    .0
+                    .map(|v| v.get())
+                    .unwrap_or(overlay.width);
+                let new_height = configure
+                    .new_size
+                    .1
+                    .map(|v| v.get())
+                    .unwrap_or(overlay.height);
+
+                if new_width != overlay.width || new_height != overlay.height {
+                    let (pool, buffer) = Self::create_overlay_pool_and_buffer(
+                        &self.wayland.shm,
+                        new_width,
+                        new_height,
+                    );
+                    overlay.pool = pool;
+                    overlay.buffer = buffer;
+                    overlay.width = new_width;
+                    overlay.height = new_height;
+                }
+
+                self.overlay = Some(OverlayState::Ready(overlay));
+                self.draw_frame(qh, DirtyRect::full(new_width, new_height));
+            }
         }
-
-        if self.first_configure {
-            self.first_configure = false;
-        }
-
-        self.draw_frame(qh, DirtyRect::full(self.width, self.height));
     }
 }
 
@@ -146,11 +204,11 @@ impl SeatHandler for View {
         seat: wl_seat::WlSeat,
         capability: Capability,
     ) {
-        if self.tablet_seat.is_none()
-            && let Some(ref manager) = self.tablet_manager
+        if let Some(ref mut tablet) = self.tablet
+            && tablet.seat.is_none()
         {
-            let tablet_seat = manager.get_tablet_seat(&seat, qh, ());
-            self.tablet_seat = Some(tablet_seat);
+            let tablet_seat = tablet.manager.get_tablet_seat(&seat, qh, ());
+            tablet.seat = Some(tablet_seat);
             log::info!("Tablet seat created for seat");
         }
 
@@ -170,13 +228,18 @@ impl SeatHandler for View {
         }
 
         if capability == Capability::Pointer && self.pointer.is_none() {
-            let pointer = self
+            let wl_pointer = self
                 .wayland
                 .seat_state
                 .get_pointer(qh, &seat)
                 .expect("Failed to get pointer");
 
-            self.pointer = Some(pointer);
+            self.pointer = Some(super::PointerState {
+                wl_pointer,
+                enter_serial: 0,
+                pos: (0.0, 0.0),
+                pressed: false,
+            });
         }
     }
 
@@ -195,7 +258,7 @@ impl SeatHandler for View {
         if capability == Capability::Pointer
             && let Some(ptr) = self.pointer.take()
         {
-            ptr.release();
+            ptr.wl_pointer.release();
         }
     }
 
@@ -278,8 +341,8 @@ impl PointerHandler for View {
         _pointer: &wl_pointer::WlPointer,
         events: &[PointerEvent],
     ) {
-        let window_surface = match self.window.as_ref() {
-            Some(w) => w.wl_surface().clone(),
+        let window_surface = match self.overlay.as_ref() {
+            Some(s) => s.window().wl_surface().clone(),
             None => return,
         };
 
@@ -290,21 +353,23 @@ impl PointerHandler for View {
 
             match event.kind {
                 PointerEventKind::Enter { serial } => {
-                    self.pointer_enter_serial = serial;
-                    self.pointer_pos = event.position;
+                    let ptr = self.pointer.as_mut().unwrap();
+                    ptr.enter_serial = serial;
+                    ptr.pos = event.position;
                     if let Some(overlay) = self.model.overlay.as_ref() {
                         let shape = overlay.cursor_shape();
                         self.apply_cursor(shape, qh);
                     }
                 }
                 PointerEventKind::Leave { .. } => {
-                    self.pointer_pressed = false;
+                    self.pointer.as_mut().unwrap().pressed = false;
                 }
                 PointerEventKind::Motion { .. } => {
-                    let prev = self.pointer_pos;
-                    self.pointer_pos = event.position;
+                    let ptr = self.pointer.as_mut().unwrap();
+                    let prev = ptr.pos;
+                    ptr.pos = event.position;
 
-                    if self.pointer_pressed
+                    if ptr.pressed
                         && let Some(overlay) = self.model.overlay.as_ref()
                     {
                         let from = Point {
@@ -321,8 +386,9 @@ impl PointerHandler for View {
                 }
                 PointerEventKind::Press { button, .. } => {
                     if button == LEFT_BUTTON {
-                        self.pointer_pressed = true;
-                        self.pointer_pos = event.position;
+                        let ptr = self.pointer.as_mut().unwrap();
+                        ptr.pressed = true;
+                        ptr.pos = event.position;
 
                         if let Some(overlay) = self.model.overlay.as_ref() {
                             let center = Point {
@@ -336,7 +402,7 @@ impl PointerHandler for View {
                 }
                 PointerEventKind::Release { button, .. } => {
                     if button == LEFT_BUTTON {
-                        self.pointer_pressed = false;
+                        self.pointer.as_mut().unwrap().pressed = false;
                     }
                 }
                 PointerEventKind::Axis { .. } => {}

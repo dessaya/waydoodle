@@ -4,7 +4,7 @@ use smithay_client_toolkit::{
 };
 use wayland_client::QueueHandle;
 
-use super::View;
+use super::{OverlayState, View};
 use crate::model::{Color, Command, Tool};
 
 impl View {
@@ -42,7 +42,7 @@ impl View {
     }
 
     fn show_overlay(&mut self, qh: &QueueHandle<Self>) {
-        if self.window.is_some() {
+        if self.overlay.is_some() {
             self.hide_overlay();
         }
 
@@ -57,21 +57,15 @@ impl View {
         window.set_maximized();
         window.commit();
 
-        self.window = Some(window);
-        self.first_configure = true;
-        self.buffer = None;
+        self.overlay = Some(OverlayState::Pending(window));
     }
 
     pub(super) fn hide_overlay(&mut self) {
-        if let Some(window) = self.window.take() {
-            let surface = window.wl_surface().clone();
-            drop(window);
+        if let Some(state) = self.overlay.take() {
+            let surface = state.window().wl_surface().clone();
+            drop(state);
             surface.destroy();
         }
-        self.buffer = None;
-        self.pool = None;
-        self.width = 0;
-        self.height = 0;
     }
 
     pub(super) fn handle_key(

@@ -2,14 +2,9 @@ use std::time::Duration;
 
 use calloop::signals::{Signal, Signals};
 use smithay_client_toolkit::{
-    compositor::CompositorState,
-    output::OutputState,
-    reexports::calloop::EventLoop,
-    reexports::calloop_wayland_source::WaylandSource,
-    registry::RegistryState,
-    seat::{SeatState, pointer::cursor_shape::CursorShapeManager},
-    shell::xdg::XdgShell,
-    shm::Shm,
+    compositor::CompositorState, output::OutputState, reexports::calloop::EventLoop,
+    reexports::calloop_wayland_source::WaylandSource, registry::RegistryState, seat::SeatState,
+    shell::xdg::XdgShell, shm::Shm,
 };
 use wayland_client::{Connection, globals::registry_queue_init};
 use wayland_protocols::wp::tablet::zv2::client::zwp_tablet_manager_v2;
@@ -17,8 +12,8 @@ use wayland_protocols::wp::tablet::zv2::client::zwp_tablet_manager_v2;
 use crate::model::Waydoodle;
 use crate::tray::{TrayEvent, WaydoodleTray};
 
-use super::cursor::TabletCursorState;
-use super::{View, WaylandState};
+use super::cursors::{Cursors, TabletCursorState};
+use super::{TabletState, View, WaylandState};
 
 impl View {
     pub fn run() {
@@ -44,16 +39,26 @@ impl View {
         let xdg_shell = XdgShell::bind(&globals, &qh).expect("xdg_wm_base not available");
         let shm = Shm::bind(&globals, &qh).expect("wl_shm not available");
 
-        let tablet_manager = globals
+        let tablet = match globals
             .bind::<zwp_tablet_manager_v2::ZwpTabletManagerV2, _, _>(&qh, 1..=1, ())
-            .ok();
-
-        let tablet_cursor = if tablet_manager.is_some() {
-            log::info!("Tablet manager bound");
-            Some(TabletCursorState::new(&conn, &compositor_state, &shm, &qh))
-        } else {
-            log::info!("Tablet manager not available (tablet input will be unavailable)");
-            None
+            .ok()
+        {
+            Some(manager) => {
+                log::info!("Tablet manager bound");
+                let cursor = TabletCursorState::new(&conn, &compositor_state, &shm, &qh);
+                Some(TabletState {
+                    manager,
+                    seat: None,
+                    cursor,
+                    active_tool: None,
+                    pos: (0.0, 0.0),
+                    pressed: false,
+                })
+            }
+            None => {
+                log::info!("Tablet manager not available (tablet input will be unavailable)");
+                None
+            }
         };
 
         // Set up the calloop channel for tray events.
@@ -72,7 +77,7 @@ impl View {
             }
         };
 
-        let eraser_cursor = View::create_eraser_cursor(&compositor_state, &shm, &qh);
+        let cursors = Cursors::new(&compositor_state, &shm, &globals, &qh);
 
         let mut view = View {
             wayland: WaylandState {
@@ -83,36 +88,13 @@ impl View {
                 xdg_shell,
                 shm,
             },
-
             keyboard: None,
             pointer: None,
-            cursor_shape_manager: CursorShapeManager::bind(&globals, &qh)
-                .expect("cursor shape manager not available"),
-            pointer_enter_serial: 0,
-            eraser_cursor,
-            tablet_cursor,
-
-            tablet_manager,
-            tablet_seat: None,
-            tablet_tool: None,
-            tablet_tool_serial: 0,
-            tablet_pos: (0.0, 0.0),
-            tablet_pressed: false,
-
-            window: None,
-            pool: None,
-            buffer: None,
-            width: 0,
-            height: 0,
-            first_configure: false,
-
-            pointer_pos: (0.0, 0.0),
-            pointer_pressed: false,
-
+            cursors,
+            tablet,
+            overlay: None,
             model: Waydoodle::new(),
-
             tray_handle,
-
             loop_handle: event_loop.handle(),
         };
 
