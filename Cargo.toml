@@ -1,6 +1,6 @@
 [package]
 name = "waydoodle"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "A minimalistic screen annotation tool for Wayland"
 license = "MIT"
@@ -18,3 +18,12 @@ log = "0.4"
 env_logger = "0.11"
 calloop = { version = "0.14", features = ["signals"] }
 ksni = { version = "0.3", default-features = false, features = ["blocking", "async-io"] }
+
+[package.metadata.deb]
+depends = "libc6, libwayland-client0"
+section = "graphics"
+assets = [
+    ["target/release/waydoodle", "usr/bin/", "755"],
+    ["assets/waydoodle.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
+    ["assets/waydoodle.desktop", "usr/share/applications/", "644"],
+]
