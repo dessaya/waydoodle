@@ -24,7 +24,7 @@ use tablet::TabletState;
 use wayland_client::protocol::{wl_keyboard, wl_pointer, wl_seat};
 use wayland_protocols::wp::tablet::zv2::client::zwp_tablet_manager_v2;
 
-use crate::{tray::WaydoodleTray, wayland::overlay::Overlay};
+use crate::{tray::WaydoodleTray, waydoodle, wayland::overlay::Overlay};
 
 struct KeyboardState {
     pub seat: wl_seat::WlSeat,
@@ -35,8 +35,7 @@ struct PointerState {
     pub seat: wl_seat::WlSeat,
     pub wl_pointer: wl_pointer::WlPointer,
     pub enter_serial: u32,
-    pub pos: (f64, f64),
-    pub pressed: bool,
+    pub model: waydoodle::PointerState,
 }
 
 struct WaylandState {

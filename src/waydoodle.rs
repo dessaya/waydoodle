@@ -2,6 +2,20 @@ use smithay_client_toolkit::seat::keyboard::Keysym;
 
 use crate::canvas::{Canvas, Point, Rect};
 
+pub(crate) struct PointerState {
+    pub pos: Point,
+    pub pressed: bool,
+}
+
+impl PointerState {
+    pub fn new() -> Self {
+        Self {
+            pos: Point { x: 0.0, y: 0.0 },
+            pressed: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum KeyAction {
     SetTool(Tool),
@@ -155,6 +169,13 @@ pub(crate) trait OverlayHelp {
     }
 }
 
+const ZERO_RECT: Rect = Rect {
+    x: 0,
+    y: 0,
+    width: 0,
+    height: 0,
+};
+
 pub(crate) trait Overlay: OverlayCanvas + OverlayTool + OverlayHelp {
     // Returns (keep_open, redraw)
     fn on_key_pressed(&mut self, keysym: Keysym) -> (bool, bool) {
@@ -180,30 +201,43 @@ pub(crate) trait Overlay: OverlayCanvas + OverlayTool + OverlayHelp {
         }
     }
 
-    fn on_drag(&mut self, from: Point, to: Point) -> Rect {
-        let radius = self.current_tool().brush_radius();
-        let pixel = self.current_tool().pixel_color();
-        self.back_canvas()
-            .map(|mut c| c.draw_line(from, to, radius, pixel))
-            .unwrap_or(Rect {
-                x: 0,
-                y: 0,
-                width: 0,
-                height: 0,
-            })
+    fn on_pointer_enter(&mut self, pointer: &mut PointerState, pos: Point) {
+        pointer.pos = pos;
     }
 
-    fn on_press(&mut self, center: Point) -> Rect {
+    fn on_pointer_leave(&mut self, pointer: &mut PointerState) {
+        pointer.pressed = false;
+    }
+
+    fn on_pointer_press(&mut self, pointer: &mut PointerState, pos: Point) -> Rect {
+        pointer.pressed = true;
+        pointer.pos = pos;
         let radius = self.current_tool().brush_radius();
         let pixel = self.current_tool().pixel_color();
         self.back_canvas()
-            .map(|mut c| c.draw_circle(center, radius, pixel))
-            .unwrap_or(Rect {
-                x: 0,
-                y: 0,
-                width: 0,
-                height: 0,
-            })
+            .map(|mut c| c.draw_circle(pos, radius, pixel))
+            .unwrap_or(ZERO_RECT)
+    }
+
+    fn on_pointer_release(&mut self, pointer: &mut PointerState) {
+        pointer.pressed = false;
+    }
+
+    fn on_pointer_motion(&mut self, pointer: &mut PointerState, pos: Point) -> Option<Rect> {
+        let prev = pointer.pos;
+        let pressed = pointer.pressed;
+        pointer.pos = pos;
+        if pressed {
+            let radius = self.current_tool().brush_radius();
+            let pixel = self.current_tool().pixel_color();
+            Some(
+                self.back_canvas()
+                    .map(|mut c| c.draw_line(prev, pos, radius, pixel))
+                    .unwrap_or(ZERO_RECT),
+            )
+        } else {
+            None
+        }
     }
 
     fn on_size_changed(&mut self) -> Option<Rect> {
@@ -525,16 +559,17 @@ mod tests {
         assert_eq!(overlay.help, original_help);
     }
 
-    // ── Overlay::on_drag tests ──
+    // ── Overlay::on_pointer_motion tests ──
 
     #[test]
-    fn on_drag_with_pen_draws_pixels() {
+    fn on_pointer_motion_with_pen_draws_pixels() {
         let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
         overlay.tool = Tool::Pen(RED);
+        let mut ptr = PointerState::new();
+        overlay.on_pointer_press(&mut ptr, Point { x: 10.0, y: 10.0 });
 
-        let from = Point { x: 10.0, y: 10.0 };
-        let to = Point { x: 20.0, y: 10.0 };
-        let damage = overlay.on_drag(from, to);
+        let damage = overlay.on_pointer_motion(&mut ptr, Point { x: 20.0, y: 10.0 });
+        let damage = damage.expect("expected damage from motion while pressed");
 
         assert!(damage.width > 0);
         assert!(damage.height > 0);
@@ -551,17 +586,29 @@ mod tests {
     }
 
     #[test]
-    fn on_drag_with_eraser_clears_pixels() {
+    fn on_pointer_motion_while_not_pressed_returns_none() {
+        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        let mut ptr = PointerState::new();
+
+        let damage = overlay.on_pointer_motion(&mut ptr, Point { x: 20.0, y: 10.0 });
+        assert!(damage.is_none());
+    }
+
+    #[test]
+    fn on_pointer_motion_with_eraser_clears_pixels() {
         let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
         // First paint a horizontal stripe with red
         overlay.tool = Tool::Pen(RED);
-        let from = Point { x: 10.0, y: 30.0 };
-        let to = Point { x: 30.0, y: 30.0 };
-        overlay.on_drag(from, to);
+        let mut ptr = PointerState::new();
+        overlay.on_pointer_press(&mut ptr, Point { x: 10.0, y: 30.0 });
+        overlay.on_pointer_motion(&mut ptr, Point { x: 30.0, y: 30.0 });
+        overlay.on_pointer_release(&mut ptr);
 
         // Now erase along the same path
         overlay.tool = Tool::Eraser;
-        let damage = overlay.on_drag(from, to);
+        overlay.on_pointer_press(&mut ptr, Point { x: 10.0, y: 30.0 });
+        let damage = overlay.on_pointer_motion(&mut ptr, Point { x: 30.0, y: 30.0 });
+        let damage = damage.expect("expected damage from eraser motion");
 
         assert!(damage.width > 0);
         assert!(damage.height > 0);
@@ -571,15 +618,15 @@ mod tests {
         assert_eq!(center_pixel, [0, 0, 0, 0]);
     }
 
-    // ── Overlay::on_press tests ──
+    // ── Overlay::on_pointer_press tests ──
 
     #[test]
-    fn on_press_draws_circle_at_point() {
+    fn on_pointer_press_draws_circle_at_point() {
         let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
         overlay.tool = Tool::Pen(GREEN);
+        let mut ptr = PointerState::new();
 
-        let center = Point { x: 32.0, y: 32.0 };
-        let damage = overlay.on_press(center);
+        let damage = overlay.on_pointer_press(&mut ptr, Point { x: 32.0, y: 32.0 });
 
         assert!(damage.width > 0);
         assert!(damage.height > 0);
@@ -587,6 +634,37 @@ mod tests {
         // The center pixel should be green
         let p = pixel_at(&overlay.buf, TEST_WIDTH, 32, 32);
         assert_eq!(p, GREEN);
+    }
+
+    // ── Overlay pointer state tests ──
+
+    #[test]
+    fn on_pointer_leave_resets_pressed() {
+        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        let mut ptr = PointerState::new();
+        overlay.on_pointer_press(&mut ptr, Point { x: 10.0, y: 10.0 });
+        assert!(ptr.pressed);
+        overlay.on_pointer_leave(&mut ptr);
+        assert!(!ptr.pressed);
+    }
+
+    #[test]
+    fn on_pointer_release_resets_pressed() {
+        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        let mut ptr = PointerState::new();
+        overlay.on_pointer_press(&mut ptr, Point { x: 10.0, y: 10.0 });
+        assert!(ptr.pressed);
+        overlay.on_pointer_release(&mut ptr);
+        assert!(!ptr.pressed);
+    }
+
+    #[test]
+    fn on_pointer_enter_updates_pos() {
+        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        let mut ptr = PointerState::new();
+        overlay.on_pointer_enter(&mut ptr, Point { x: 42.0, y: 17.0 });
+        assert_eq!(ptr.pos.x, 42.0);
+        assert_eq!(ptr.pos.y, 17.0);
     }
 
     // ── Overlay::on_size_changed tests ──

@@ -23,7 +23,7 @@ use wayland_client::{
 
 use crate::{
     canvas::{Point, Rect},
-    waydoodle::{App as _, DEFAULT_TOOL, Overlay as _, OverlayTool as _},
+    waydoodle::{self, App as _, DEFAULT_TOOL, Overlay as _, OverlayTool as _},
     wayland::{App, Overlay},
 };
 
@@ -220,8 +220,7 @@ impl SeatHandler for App {
                 seat: seat.clone(),
                 wl_pointer,
                 enter_serial: 0,
-                pos: (0.0, 0.0),
-                pressed: false,
+                model: waydoodle::PointerState::new(),
             });
         }
 
@@ -239,8 +238,7 @@ impl SeatHandler for App {
                     _seat: tablet_seat,
                     cursor,
                     active_tool: None,
-                    pos: (0.0, 0.0),
-                    pressed: false,
+                    model: waydoodle::PointerState::new(),
                 });
                 log::info!("Tablet seat created for seat");
             }
@@ -401,9 +399,14 @@ impl PointerHandler for App {
                         continue;
                     };
                     ptr.enter_serial = serial;
-                    ptr.pos = event.position;
-                    if let Some(Some(overlay)) = self.get_overlay() {
-                        self.apply_cursor(overlay.current_tool().cursor_shape(), qh);
+                    if let Some(OverlayState::Ready(overlay)) = self.overlay.as_mut() {
+                        let pos = Point {
+                            x: event.position.0,
+                            y: event.position.1,
+                        };
+                        overlay.on_pointer_enter(&mut ptr.model, pos);
+                        let shape = overlay.current_tool().cursor_shape();
+                        self.apply_cursor(shape, qh);
                     }
                 }
                 PointerEventKind::Leave { .. } => {
@@ -411,29 +414,23 @@ impl PointerHandler for App {
                     else {
                         continue;
                     };
-                    ptr.pressed = false;
+                    if let Some(OverlayState::Ready(overlay)) = self.overlay.as_mut() {
+                        overlay.on_pointer_leave(&mut ptr.model);
+                    }
                 }
                 PointerEventKind::Motion { .. } => {
                     let Some(ptr) = self.pointers.iter_mut().find(|p| &p.wl_pointer == pointer)
                     else {
                         continue;
                     };
-                    let prev = ptr.pos;
-                    ptr.pos = event.position;
-
-                    if ptr.pressed
-                        && let Some(OverlayState::Ready(overlay)) = self.overlay.as_mut()
-                    {
-                        let from = Point {
-                            x: prev.0,
-                            y: prev.1,
-                        };
-                        let to = Point {
+                    if let Some(OverlayState::Ready(overlay)) = self.overlay.as_mut() {
+                        let pos = Point {
                             x: event.position.0,
                             y: event.position.1,
                         };
-                        let damage = overlay.on_drag(from, to);
-                        overlay.mark_dirty(qh, damage);
+                        if let Some(damage) = overlay.on_pointer_motion(&mut ptr.model, pos) {
+                            overlay.mark_dirty(qh, damage);
+                        }
                     }
                 }
                 PointerEventKind::Press { button, .. } => {
@@ -442,15 +439,12 @@ impl PointerHandler for App {
                         else {
                             continue;
                         };
-                        ptr.pressed = true;
-                        ptr.pos = event.position;
-
                         if let Some(OverlayState::Ready(overlay)) = self.overlay.as_mut() {
-                            let center = Point {
+                            let pos = Point {
                                 x: event.position.0,
                                 y: event.position.1,
                             };
-                            let damage = overlay.on_press(center);
+                            let damage = overlay.on_pointer_press(&mut ptr.model, pos);
                             overlay.mark_dirty(qh, damage);
                         }
                     }
@@ -461,7 +455,9 @@ impl PointerHandler for App {
                         else {
                             continue;
                         };
-                        ptr.pressed = false;
+                        if let Some(OverlayState::Ready(overlay)) = self.overlay.as_mut() {
+                            overlay.on_pointer_release(&mut ptr.model);
+                        }
                     }
                 }
                 PointerEventKind::Axis { .. } => {}
