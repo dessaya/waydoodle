@@ -27,7 +27,7 @@ use crate::{
     wayland::{App, Overlay},
 };
 
-use super::OverlayState;
+use super::{OverlayState, cursors::TabletCursorState, tablet::TabletState};
 
 impl CompositorHandler for App {
     fn scale_factor_changed(
@@ -186,21 +186,13 @@ impl SeatHandler for App {
 
     fn new_capability(
         &mut self,
-        _conn: &Connection,
+        conn: &Connection,
         qh: &QueueHandle<Self>,
         seat: wl_seat::WlSeat,
         capability: Capability,
     ) {
-        if let Some(ref mut tablet) = self.tablet
-            && tablet.seat.is_none()
-        {
-            let tablet_seat = tablet.manager.get_tablet_seat(&seat, qh, ());
-            tablet.seat = Some(tablet_seat);
-            log::info!("Tablet seat created for seat");
-        }
-
-        if capability == Capability::Keyboard && self.keyboard.is_none() {
-            let keyboard = self
+        if capability == Capability::Keyboard && !self.keyboards.iter().any(|k| k.seat == seat) {
+            let wl_keyboard = self
                 .wayland
                 .seat_state
                 .get_keyboard_with_repeat(
@@ -211,22 +203,47 @@ impl SeatHandler for App {
                     Box::new(|_state, _wl_kbd, _event| {}),
                 )
                 .expect("Failed to get keyboard");
-            self.keyboard = Some(keyboard);
+            self.keyboards.push(super::KeyboardState {
+                seat: seat.clone(),
+                wl_keyboard,
+            });
         }
 
-        if capability == Capability::Pointer && self.pointer.is_none() {
+        if capability == Capability::Pointer && !self.pointers.iter().any(|p| p.seat == seat) {
             let wl_pointer = self
                 .wayland
                 .seat_state
                 .get_pointer(qh, &seat)
                 .expect("Failed to get pointer");
 
-            self.pointer = Some(super::PointerState {
+            self.pointers.push(super::PointerState {
+                seat: seat.clone(),
                 wl_pointer,
                 enter_serial: 0,
                 pos: (0.0, 0.0),
                 pressed: false,
             });
+        }
+
+        if let Some(ref manager) = self.tablet_manager {
+            if !self.tablets.iter().any(|t| t.wl_seat == seat) {
+                let tablet_seat = manager.get_tablet_seat(&seat, qh, ());
+                let cursor = TabletCursorState::new(
+                    conn,
+                    &self.wayland.compositor_state,
+                    &self.wayland.shm,
+                    qh,
+                );
+                self.tablets.push(TabletState {
+                    wl_seat: seat.clone(),
+                    _seat: tablet_seat,
+                    cursor,
+                    active_tool: None,
+                    pos: (0.0, 0.0),
+                    pressed: false,
+                });
+                log::info!("Tablet seat created for seat");
+            }
         }
     }
 
@@ -234,22 +251,49 @@ impl SeatHandler for App {
         &mut self,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
-        _seat: wl_seat::WlSeat,
+        seat: wl_seat::WlSeat,
         capability: Capability,
     ) {
-        if capability == Capability::Keyboard
-            && let Some(kbd) = self.keyboard.take()
-        {
-            kbd.release();
+        if capability == Capability::Keyboard {
+            self.keyboards.retain(|k| {
+                if k.seat == seat {
+                    k.wl_keyboard.release();
+                    false
+                } else {
+                    true
+                }
+            });
         }
-        if capability == Capability::Pointer
-            && let Some(ptr) = self.pointer.take()
-        {
-            ptr.wl_pointer.release();
+        if capability == Capability::Pointer {
+            self.pointers.retain(|p| {
+                if p.seat == seat {
+                    p.wl_pointer.release();
+                    false
+                } else {
+                    true
+                }
+            });
         }
     }
 
-    fn remove_seat(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _seat: wl_seat::WlSeat) {
+    fn remove_seat(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, seat: wl_seat::WlSeat) {
+        self.keyboards.retain(|k| {
+            if k.seat == seat {
+                k.wl_keyboard.release();
+                false
+            } else {
+                true
+            }
+        });
+        self.pointers.retain(|p| {
+            if p.seat == seat {
+                p.wl_pointer.release();
+                false
+            } else {
+                true
+            }
+        });
+        self.tablets.retain(|t| t.wl_seat != seat);
     }
 }
 
@@ -337,7 +381,7 @@ impl PointerHandler for App {
         &mut self,
         _conn: &Connection,
         qh: &QueueHandle<Self>,
-        _pointer: &wl_pointer::WlPointer,
+        pointer: &wl_pointer::WlPointer,
         events: &[PointerEvent],
     ) {
         let window_surface = match self.overlay.as_ref() {
@@ -352,7 +396,8 @@ impl PointerHandler for App {
 
             match event.kind {
                 PointerEventKind::Enter { serial } => {
-                    let Some(ptr) = self.pointer.as_mut() else {
+                    let Some(ptr) = self.pointers.iter_mut().find(|p| &p.wl_pointer == pointer)
+                    else {
                         continue;
                     };
                     ptr.enter_serial = serial;
@@ -362,13 +407,15 @@ impl PointerHandler for App {
                     }
                 }
                 PointerEventKind::Leave { .. } => {
-                    let Some(ptr) = self.pointer.as_mut() else {
+                    let Some(ptr) = self.pointers.iter_mut().find(|p| &p.wl_pointer == pointer)
+                    else {
                         continue;
                     };
                     ptr.pressed = false;
                 }
                 PointerEventKind::Motion { .. } => {
-                    let Some(ptr) = self.pointer.as_mut() else {
+                    let Some(ptr) = self.pointers.iter_mut().find(|p| &p.wl_pointer == pointer)
+                    else {
                         continue;
                     };
                     let prev = ptr.pos;
@@ -391,7 +438,8 @@ impl PointerHandler for App {
                 }
                 PointerEventKind::Press { button, .. } => {
                     if button == BTN_LEFT {
-                        let Some(ptr) = self.pointer.as_mut() else {
+                        let Some(ptr) = self.pointers.iter_mut().find(|p| &p.wl_pointer == pointer)
+                        else {
                             continue;
                         };
                         ptr.pressed = true;
@@ -409,7 +457,8 @@ impl PointerHandler for App {
                 }
                 PointerEventKind::Release { button, .. } => {
                     if button == BTN_LEFT {
-                        let Some(ptr) = self.pointer.as_mut() else {
+                        let Some(ptr) = self.pointers.iter_mut().find(|p| &p.wl_pointer == pointer)
+                        else {
                             continue;
                         };
                         ptr.pressed = false;

@@ -21,11 +21,18 @@ use smithay_client_toolkit::{
     shm::Shm,
 };
 use tablet::TabletState;
-use wayland_client::protocol::{wl_keyboard, wl_pointer};
+use wayland_client::protocol::{wl_keyboard, wl_pointer, wl_seat};
+use wayland_protocols::wp::tablet::zv2::client::zwp_tablet_manager_v2;
 
 use crate::{tray::WaydoodleTray, wayland::overlay::Overlay};
 
+struct KeyboardState {
+    pub seat: wl_seat::WlSeat,
+    pub wl_keyboard: wl_keyboard::WlKeyboard,
+}
+
 struct PointerState {
+    pub seat: wl_seat::WlSeat,
     pub wl_pointer: wl_pointer::WlPointer,
     pub enter_serial: u32,
     pub pos: (f64, f64),
@@ -62,11 +69,12 @@ impl OverlayState {
 
 pub(crate) struct App {
     wayland: WaylandState,
-    keyboard: Option<wl_keyboard::WlKeyboard>,
-    cursors: Cursors,
-    tablet: Option<TabletState>,
     overlay: Option<OverlayState>,
-    pointer: Option<PointerState>,
+    cursors: Cursors,
+    keyboards: Vec<KeyboardState>,
+    pointers: Vec<PointerState>,
+    tablets: Vec<TabletState>,
+    tablet_manager: Option<zwp_tablet_manager_v2::ZwpTabletManagerV2>,
     tray_handle: Option<Handle<WaydoodleTray>>,
     loop_handle: calloop::LoopHandle<'static, Self>,
     queue_handle: wayland_client::QueueHandle<Self>,

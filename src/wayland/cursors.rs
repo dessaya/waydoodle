@@ -142,68 +142,63 @@ impl App {
     }
 
     fn set_pointer_cursor(&self, shape: CursorShape, qh: &QueueHandle<Self>) {
-        let ptr = match self.pointer.as_ref() {
-            Some(p) => p,
-            None => return,
-        };
-
-        match shape {
-            CursorShape::Crosshair => {
-                let device = self
-                    .cursors
-                    .shape_manager
-                    .get_shape_device(&ptr.wl_pointer, qh);
-                device.set_shape(
-                    ptr.enter_serial,
-                    wp_cursor_shape_device_v1::Shape::Crosshair,
-                );
-                device.destroy();
-            }
-            CursorShape::Circle => {
-                let cursor = &self.cursors.eraser;
-                ptr.wl_pointer.set_cursor(
-                    ptr.enter_serial,
-                    Some(&cursor.surface),
-                    cursor.hotspot_x,
-                    cursor.hotspot_y,
-                );
+        for ptr in &self.pointers {
+            match shape {
+                CursorShape::Crosshair => {
+                    let device = self
+                        .cursors
+                        .shape_manager
+                        .get_shape_device(&ptr.wl_pointer, qh);
+                    device.set_shape(
+                        ptr.enter_serial,
+                        wp_cursor_shape_device_v1::Shape::Crosshair,
+                    );
+                    device.destroy();
+                }
+                CursorShape::Circle => {
+                    let cursor = &self.cursors.eraser;
+                    ptr.wl_pointer.set_cursor(
+                        ptr.enter_serial,
+                        Some(&cursor.surface),
+                        cursor.hotspot_x,
+                        cursor.hotspot_y,
+                    );
+                }
             }
         }
     }
 
     fn set_tablet_cursor(&mut self, shape: CursorShape) {
-        let tablet = match self.tablet.as_mut() {
-            Some(t) => t,
-            None => return,
-        };
-        let active = match tablet.active_tool.as_ref() {
-            Some(a) => a,
-            None => return,
-        };
+        for tablet in &mut self.tablets {
+            let active = match tablet.active_tool.as_ref() {
+                Some(a) => a,
+                None => continue,
+            };
 
-        match shape {
-            CursorShape::Crosshair => {
-                if let Some(cursor) = tablet.cursor.cursor_theme.get_cursor("crosshair") {
-                    let image = &cursor[0];
-                    let (hotspot_x, hotspot_y) = image.hotspot();
-                    tablet.cursor.cursor_surface.attach(Some(image), 0, 0);
-                    tablet.cursor.cursor_surface.commit();
+            match shape {
+                CursorShape::Crosshair => {
+                    if let Some(cursor) = tablet.cursor.cursor_theme.get_cursor("crosshair") {
+                        let image = &cursor[0];
+                        let (hotspot_x, hotspot_y) = image.hotspot();
+                        tablet.cursor.cursor_surface.attach(Some(image), 0, 0);
+                        tablet.cursor.cursor_surface.commit();
+                        active.tool.set_cursor(
+                            active.serial,
+                            Some(&tablet.cursor.cursor_surface),
+                            hotspot_x as i32,
+                            hotspot_y as i32,
+                        );
+                    }
+                }
+                CursorShape::Circle => {
+                    let cursor = &tablet.cursor.eraser_cursor;
                     active.tool.set_cursor(
                         active.serial,
-                        Some(&tablet.cursor.cursor_surface),
-                        hotspot_x as i32,
-                        hotspot_y as i32,
+                        Some(&cursor.surface),
+                        cursor.hotspot_x,
+                        cursor.hotspot_y,
                     );
                 }
-            }
-            CursorShape::Circle => {
-                let cursor = &tablet.cursor.eraser_cursor;
-                active.tool.set_cursor(
-                    active.serial,
-                    Some(&cursor.surface),
-                    cursor.hotspot_x,
-                    cursor.hotspot_y,
-                );
             }
         }
     }

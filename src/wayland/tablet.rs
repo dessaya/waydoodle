@@ -1,3 +1,4 @@
+use wayland_client::protocol::wl_seat;
 use wayland_client::{Connection, Dispatch, QueueHandle, delegate_noop, event_created_child};
 use wayland_protocols::wp::tablet::zv2::client::{
     zwp_tablet_manager_v2, zwp_tablet_pad_group_v2, zwp_tablet_pad_ring_v2,
@@ -19,8 +20,9 @@ pub(super) struct ActiveTabletTool {
 }
 
 pub(super) struct TabletState {
-    pub manager: zwp_tablet_manager_v2::ZwpTabletManagerV2,
-    pub seat: Option<zwp_tablet_seat_v2::ZwpTabletSeatV2>,
+    pub wl_seat: wl_seat::WlSeat,
+    /// Kept alive so the compositor continues sending tablet events for this seat.
+    pub _seat: zwp_tablet_seat_v2::ZwpTabletSeatV2,
     pub cursor: TabletCursorState,
     pub active_tool: Option<ActiveTabletTool>,
     pub pos: (f64, f64),
@@ -62,7 +64,8 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for App {
                 tablet: _,
                 surface: _,
             } => {
-                let Some(tablet) = state.tablet.as_mut() else {
+                let Some(tablet) = state.tablets.iter_mut().find(|t| t.active_tool.is_none())
+                else {
                     return;
                 };
                 tablet.active_tool = Some(ActiveTabletTool {
@@ -75,13 +78,22 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for App {
                 }
             }
             zwp_tablet_tool_v2::Event::ProximityOut => {
-                let Some(tablet) = state.tablet.as_mut() else {
+                let Some(tablet) = state
+                    .tablets
+                    .iter_mut()
+                    .find(|t| t.active_tool.as_ref().is_some_and(|a| &a.tool == tool))
+                else {
                     return;
                 };
                 tablet.pressed = false;
+                tablet.active_tool = None;
             }
             zwp_tablet_tool_v2::Event::Down { .. } => {
-                let Some(tablet) = state.tablet.as_mut() else {
+                let Some(tablet) = state
+                    .tablets
+                    .iter_mut()
+                    .find(|t| t.active_tool.as_ref().is_some_and(|a| &a.tool == tool))
+                else {
                     return;
                 };
                 let pos = tablet.pos;
@@ -94,13 +106,21 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for App {
                 }
             }
             zwp_tablet_tool_v2::Event::Up => {
-                let Some(tablet) = state.tablet.as_mut() else {
+                let Some(tablet) = state
+                    .tablets
+                    .iter_mut()
+                    .find(|t| t.active_tool.as_ref().is_some_and(|a| &a.tool == tool))
+                else {
                     return;
                 };
                 tablet.pressed = false;
             }
             zwp_tablet_tool_v2::Event::Motion { x, y } => {
-                let Some(tablet) = state.tablet.as_mut() else {
+                let Some(tablet) = state
+                    .tablets
+                    .iter_mut()
+                    .find(|t| t.active_tool.as_ref().is_some_and(|a| &a.tool == tool))
+                else {
                     return;
                 };
                 let prev = tablet.pos;
@@ -122,11 +142,10 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for App {
             zwp_tablet_tool_v2::Event::Pressure { .. } => {}
             zwp_tablet_tool_v2::Event::Frame { .. } => {}
             zwp_tablet_tool_v2::Event::Removed => {
-                let Some(tablet) = state.tablet.as_mut() else {
-                    return;
-                };
-                if tablet.active_tool.as_ref().is_some_and(|a| &a.tool == tool) {
-                    tablet.active_tool = None;
+                for tablet in &mut state.tablets {
+                    if tablet.active_tool.as_ref().is_some_and(|a| &a.tool == tool) {
+                        tablet.active_tool = None;
+                    }
                 }
                 tool.destroy();
             }

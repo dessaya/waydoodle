@@ -10,10 +10,7 @@ use smithay_client_toolkit::{
 use wayland_client::{Connection, globals::registry_queue_init};
 use wayland_protocols::wp::tablet::zv2::client::zwp_tablet_manager_v2;
 
-use super::{
-    TabletState, WaylandState,
-    cursors::{Cursors, TabletCursorState},
-};
+use super::{WaylandState, cursors::Cursors};
 use crate::{
     tray::{TrayEvent, WaydoodleTray},
     waydoodle::App as _,
@@ -44,27 +41,14 @@ impl App {
         let xdg_shell = XdgShell::bind(&globals, &qh).expect("xdg_wm_base not available");
         let shm = Shm::bind(&globals, &qh).expect("wl_shm not available");
 
-        let tablet = match globals
+        let tablet_manager = globals
             .bind::<zwp_tablet_manager_v2::ZwpTabletManagerV2, _, _>(&qh, 1..=1, ())
-            .ok()
-        {
-            Some(manager) => {
-                log::info!("Tablet manager bound");
-                let cursor = TabletCursorState::new(&conn, &compositor_state, &shm, &qh);
-                Some(TabletState {
-                    manager,
-                    seat: None,
-                    cursor,
-                    active_tool: None,
-                    pos: (0.0, 0.0),
-                    pressed: false,
-                })
-            }
-            None => {
-                log::info!("Tablet manager not available (tablet input will be unavailable)");
-                None
-            }
-        };
+            .ok();
+        if tablet_manager.is_some() {
+            log::info!("Tablet manager bound");
+        } else {
+            log::info!("Tablet manager not available (tablet input will be unavailable)");
+        }
 
         // Set up the calloop channel for tray events.
         let (tray_sender, tray_channel) = calloop::channel::channel::<TrayEvent>();
@@ -93,10 +77,11 @@ impl App {
                 xdg_shell,
                 shm,
             },
-            keyboard: None,
-            pointer: None,
+            keyboards: Vec::new(),
+            pointers: Vec::new(),
+            tablets: Vec::new(),
+            tablet_manager,
             cursors,
-            tablet,
             overlay: None,
             tray_handle,
             loop_handle: event_loop.handle(),
