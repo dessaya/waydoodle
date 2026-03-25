@@ -127,7 +127,7 @@ impl App {
         // free of any transient UI — no cleanup needed when help is dismissed.
         if show_help {
             if let Some(mut canvas) = overlay.back_canvas() {
-                super::help::render_help(&mut canvas);
+                crate::help::render_help(&mut canvas);
             }
         }
 

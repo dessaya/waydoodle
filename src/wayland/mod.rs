@@ -6,7 +6,7 @@
 pub mod app;
 mod cursors;
 mod handlers;
-mod help;
+
 mod overlay;
 mod render;
 mod tablet;

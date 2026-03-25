@@ -1,3 +1,8 @@
+use bdf_reader::Font;
+
+pub const GLYPH_W: u32 = 8;
+pub const GLYPH_H: u32 = 16;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Point {
     pub x: f64,
@@ -115,6 +120,13 @@ impl<'a> Canvas<'a> {
         }
     }
 
+    pub fn draw_border(&mut self, x: i32, y: i32, w: u32, h: u32, color: [u8; 4]) {
+        self.draw_rect(x, y, w, 1, color);
+        self.draw_rect(x, y + h as i32 - 1, w, 1, color);
+        self.draw_rect(x, y, 1, h, color);
+        self.draw_rect(x + w as i32 - 1, y, 1, h, color);
+    }
+
     pub fn draw_line(&mut self, from: Point, to: Point, radius: f64, pixel: [u8; 4]) -> Rect {
         let width = self.width;
         let height = self.height;
@@ -146,5 +158,38 @@ impl<'a> Canvas<'a> {
             width: (x1 - x).max(0),
             height: (y1 - y).max(0),
         }
+    }
+
+    pub fn draw_text(&mut self, font: &Font, text: &str, x: i32, y: i32, color: [u8; 4]) {
+        let font_bb = font.bounding_box();
+        let mut cursor_x = x;
+        for ch in text.chars() {
+            if let Some(glyph) = font.glyph(ch) {
+                let bb = glyph.bounding_box();
+                let bitmap = glyph.bitmap();
+                for row in 0..bb.height as usize {
+                    for col in 0..bb.width as usize {
+                        if bitmap.get(col, row).unwrap_or(false) {
+                            let px = cursor_x + bb.offset_x + col as i32;
+                            let py = y
+                                + (font_bb.height as i32 - bb.offset_y - bb.height as i32)
+                                + row as i32;
+                            self.set_pixel(px, py, color);
+                        }
+                    }
+                }
+                let advance = glyph
+                    .dwidth()
+                    .map(|(dx, _)| dx as i32)
+                    .unwrap_or(GLYPH_W as i32);
+                cursor_x += advance;
+            } else {
+                cursor_x += GLYPH_W as i32;
+            }
+        }
+    }
+
+    pub fn text_width(text: &str) -> u32 {
+        text.len() as u32 * GLYPH_W
     }
 }
