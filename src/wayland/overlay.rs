@@ -10,8 +10,8 @@ use smithay_client_toolkit::{
 };
 
 use crate::{
-    canvas::{Canvas, Rect},
-    waydoodle::{self, Tool},
+    canvas::{Canvas, Point, Rect},
+    waydoodle::{self, StrokeItem, Tool},
     wayland::{App, OverlayState},
 };
 
@@ -37,6 +37,10 @@ pub(super) struct Overlay {
 
     /// for OverlayHelp
     pub help: bool,
+
+    /// for OverlayStrokes
+    pub strokes: Vec<StrokeItem>,
+    pub current_points: Vec<Point>,
 }
 
 impl App {
@@ -136,5 +140,23 @@ impl waydoodle::OverlayHelp for Overlay {
 
     fn set_show_help(&mut self, show: bool) {
         self.help = show;
+    }
+}
+
+impl waydoodle::OverlayStrokes for Overlay {
+    fn strokes(&self) -> &[StrokeItem] {
+        &self.strokes
+    }
+
+    fn push_stroke(&mut self, item: StrokeItem) {
+        self.strokes.push(item);
+    }
+
+    fn pop_stroke(&mut self) -> Option<StrokeItem> {
+        self.strokes.pop()
+    }
+
+    fn current_points(&mut self) -> &mut Vec<Point> {
+        &mut self.current_points
     }
 }
