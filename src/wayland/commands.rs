@@ -34,6 +34,16 @@ impl View {
                 center,
             } => self.draw_dot(style, radius, center),
             Command::ClearBuffer => self.clear_buffer(),
+            Command::ToggleHelp(_) => {
+                let overlay = match self.overlay.as_ref() {
+                    Some(OverlayState::Ready(o)) => o,
+                    _ => return,
+                };
+                Some(super::render::DirtyRect::full(
+                    overlay.width,
+                    overlay.height,
+                ))
+            }
         };
 
         if let Some(damage) = damage {
@@ -73,6 +83,7 @@ impl View {
         };
 
         let cmd = match keysym {
+            Keysym::F1 => Some(overlay.toggle_help()),
             Keysym::r | Keysym::R => Some(overlay.set_tool(Tool::Pen(Color::Red))),
             Keysym::g | Keysym::G => Some(overlay.set_tool(Tool::Pen(Color::Green))),
             Keysym::b | Keysym::B => Some(overlay.set_tool(Tool::Pen(Color::Blue))),

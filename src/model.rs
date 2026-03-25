@@ -59,6 +59,7 @@ pub enum Command {
         center: Point,
     },
     ClearBuffer,
+    ToggleHelp(bool),
 }
 
 pub const PEN_RADIUS: f64 = 1.5;
@@ -66,6 +67,7 @@ pub const ERASER_RADIUS: f64 = 10.0;
 
 pub struct Overlay {
     pub current_tool: Tool,
+    pub show_help: bool,
 }
 
 impl Default for Overlay {
@@ -78,7 +80,13 @@ impl Overlay {
     pub fn new() -> Self {
         Self {
             current_tool: Tool::Pen(Color::Red),
+            show_help: false,
         }
+    }
+
+    pub fn toggle_help(&mut self) -> Command {
+        self.show_help = !self.show_help;
+        Command::ToggleHelp(self.show_help)
     }
 
     pub fn set_tool(&mut self, tool: Tool) -> Command {
@@ -395,6 +403,29 @@ mod tests {
         let cmd = app.reset_overlay();
         assert_eq!(cmd, None);
         assert!(app.overlay.is_none());
+    }
+
+    #[test]
+    fn help_defaults_to_hidden() {
+        let overlay = Overlay::new();
+        assert_eq!(overlay.show_help, false);
+    }
+
+    #[test]
+    fn toggle_help_shows() {
+        let mut overlay = Overlay::new();
+        let cmd = overlay.toggle_help();
+        assert_eq!(overlay.show_help, true);
+        assert_eq!(cmd, Command::ToggleHelp(true));
+    }
+
+    #[test]
+    fn toggle_help_hides() {
+        let mut overlay = Overlay::new();
+        overlay.toggle_help();
+        let cmd = overlay.toggle_help();
+        assert_eq!(overlay.show_help, false);
+        assert_eq!(cmd, Command::ToggleHelp(false));
     }
 
     #[test]

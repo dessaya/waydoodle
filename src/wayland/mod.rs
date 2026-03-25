@@ -9,6 +9,7 @@ mod commands;
 mod cursors;
 mod drawing;
 mod handlers;
+mod help;
 mod init;
 mod render;
 mod tablet;

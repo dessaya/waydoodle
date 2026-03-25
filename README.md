@@ -12,6 +12,7 @@ or [Wayscriber](https://wayscriber.com/), Waydoodle provides only the essentials
 - Change color (<kbd>r</kbd>, <kbd>g</kbd>, <kbd>b</kbd>, <kbd>y</kbd>, <kbd>m</kbd>, <kbd>n</kbd>)
 - Erase (<kbd>e</kbd>)
 - Clear (<kbd>c</kbd>)
+- On-screen help (<kbd>F1</kbd>)
 
 ## Installation
 
@@ -61,6 +62,7 @@ While the overlay is visible:
 | <kbd>n</kbd> | Cyan pen |
 | <kbd>e</kbd> | Eraser |
 | <kbd>c</kbd> | Clear all |
+| <kbd>F1</kbd> | Toggle help screen |
 | <kbd>Esc</kbd> | Hide overlay |
 
 ## Global shortcut
@@ -75,6 +77,11 @@ choice that executes:
 ```
 pkill -SIGUSR1 waydoodle
 ```
+
+## Acknowledgements
+
+Waydoodle uses the [Tamzen](https://github.com/sunaku/tamzen-font) bitmap font
+for on-screen text rendering.
 
 ## License
 

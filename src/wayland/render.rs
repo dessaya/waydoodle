@@ -139,6 +139,8 @@ impl View {
     }
 
     fn flush_frame(&mut self) {
+        let show_help = self.model.overlay.as_ref().is_some_and(|o| o.show_help);
+
         let overlay = match self.overlay.as_mut() {
             Some(OverlayState::Ready(o)) => o,
             _ => return,
@@ -149,9 +151,21 @@ impl View {
             None => return,
         };
 
-        // Copy back-buffer contents into the front buffer so both stay in sync,
-        // then present the back buffer and swap indices.
+        // Copy back-buffer contents into the front buffer so both stay in sync.
+        // After this, both buffers contain identical drawing data.
         overlay.sync_buffers();
+
+        // Composite the help panel into the back buffer (which is about to be
+        // presented to the compositor). The front buffer retains the clean
+        // drawing data, so after swap() the new back buffer (old front) is
+        // free of any transient UI — no cleanup needed when help is dismissed.
+        if show_help {
+            let width = overlay.width;
+            let height = overlay.height;
+            if let Some(canvas) = overlay.back_canvas() {
+                super::help::render_help(canvas, width, height);
+            }
+        }
 
         let back = overlay.back_index();
         let surface = overlay.window.wl_surface();
