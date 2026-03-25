@@ -29,9 +29,6 @@ annotate on the screen (e.g. for presentations).
   values. When it is hidden, the struct is dropped and its resources are freed.
   There is no persistence of the buffer or the current tool between toggles.
 
-- If the screen resolution changes while the overlay is visible, the Overlay
-  struct is recreated with the new dimensions and default values.
-
 - Whenever the overlay is visible, the app listens for key presses to change the current
   tool:
   - r, g, b, y, m, n: pen(red, green, blue, yellow, magenta, cyan)

@@ -24,10 +24,15 @@ use wayland_client::{
     protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_surface},
 };
 
-use super::{DirtyRect, OverlayState, View, ViewOverlay};
-use crate::model::Point;
+use crate::{
+    canvas::{Point, Rect},
+    waydoodle::{App as _, Color, Key, Overlay as _, Tool},
+    wayland::{App, Overlay},
+};
 
-impl CompositorHandler for View {
+use super::OverlayState;
+
+impl CompositorHandler for App {
     fn scale_factor_changed(
         &mut self,
         _conn: &Connection,
@@ -75,7 +80,7 @@ impl CompositorHandler for View {
     }
 }
 
-impl OutputHandler for View {
+impl OutputHandler for App {
     fn output_state(&mut self) -> &mut OutputState {
         &mut self.wayland.output_state
     }
@@ -105,7 +110,7 @@ impl OutputHandler for View {
     }
 }
 
-impl View {
+impl App {
     pub(super) fn create_overlay_pool_and_buffers(
         shm: &Shm,
         width: u32,
@@ -113,12 +118,12 @@ impl View {
     ) -> (SlotPool, [Buffer; 2]) {
         let size = width as usize * height as usize * 4 * 2;
         let mut pool = SlotPool::new(size, shm).expect("Failed to create SHM slot pool");
-        let buffers = ViewOverlay::create_buffers(&mut pool, width, height);
+        let buffers = Overlay::create_buffers(&mut pool, width, height);
         (pool, buffers)
     }
 }
 
-impl WindowHandler for View {
+impl WindowHandler for App {
     fn request_close(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _window: &Window) {}
 
     fn configure(
@@ -140,7 +145,7 @@ impl WindowHandler for View {
                 let height = configure.new_size.1.map(|v| v.get()).unwrap_or(1);
                 let (pool, buffers) =
                     Self::create_overlay_pool_and_buffers(&self.wayland.shm, width, height);
-                self.overlay = Some(OverlayState::Ready(ViewOverlay {
+                self.overlay = Some(OverlayState::Ready(Overlay {
                     window,
                     pool,
                     buffers,
@@ -149,8 +154,10 @@ impl WindowHandler for View {
                     height,
                     pending_damage: None,
                     frame_requested: false,
+                    tool: Tool::Pen(Color::Red),
+                    help: false,
                 }));
-                self.mark_dirty(qh, DirtyRect::full(width, height));
+                self.mark_dirty(qh, Rect::new(width, height));
             }
             OverlayState::Ready(mut overlay) => {
                 let new_width = configure
@@ -175,20 +182,17 @@ impl WindowHandler for View {
                     overlay.front = 0;
                     overlay.width = new_width;
                     overlay.height = new_height;
-
-                    if let Some(cmd) = self.model.reset_overlay() {
-                        self.dispatch_command(qh, cmd);
-                    }
+                    overlay.on_size_changed();
                 }
 
                 self.overlay = Some(OverlayState::Ready(overlay));
-                self.mark_dirty(qh, DirtyRect::full(new_width, new_height));
+                self.mark_dirty(qh, Rect::new(new_width, new_height));
             }
         }
     }
 }
 
-impl SeatHandler for View {
+impl SeatHandler for App {
     fn seat_state(&mut self) -> &mut SeatState {
         &mut self.wayland.seat_state
     }
@@ -264,7 +268,7 @@ impl SeatHandler for View {
     }
 }
 
-impl KeyboardHandler for View {
+impl KeyboardHandler for App {
     fn enter(
         &mut self,
         _conn: &Connection,
@@ -295,7 +299,31 @@ impl KeyboardHandler for View {
         _serial: u32,
         event: KeyEvent,
     ) {
-        self.handle_key(qh, event.keysym);
+        if let Some(OverlayState::Ready(overlay)) = self.overlay.as_mut() {
+            log::debug!("Key event received: {:?}", event);
+            let key = match event.keysym {
+                Keysym::r => Key::R,
+                Keysym::g => Key::G,
+                Keysym::b => Key::B,
+                Keysym::y => Key::Y,
+                Keysym::m => Key::M,
+                Keysym::n => Key::N,
+                Keysym::e => Key::E,
+                Keysym::c => Key::C,
+                Keysym::Escape => Key::ESC,
+                Keysym::F1 => Key::F1,
+                _ => return,
+            };
+            let keep_open = overlay.on_key_pressed(key);
+            let shape = overlay.current_tool().cursor_shape();
+            let damage = Rect::new(overlay.width, overlay.height);
+            if !keep_open {
+                self.on_toggle_overlay();
+            } else {
+                self.apply_cursor(shape, qh);
+                self.mark_dirty(qh, damage);
+            }
+        }
     }
 
     fn repeat_key(
@@ -331,7 +359,7 @@ impl KeyboardHandler for View {
     }
 }
 
-impl PointerHandler for View {
+impl PointerHandler for App {
     fn pointer_frame(
         &mut self,
         _conn: &Connection,
@@ -356,9 +384,8 @@ impl PointerHandler for View {
                     };
                     ptr.enter_serial = serial;
                     ptr.pos = event.position;
-                    if let Some(overlay) = self.model.overlay.as_ref() {
-                        let shape = overlay.cursor_shape();
-                        self.apply_cursor(shape, qh);
+                    if let Some(Some(overlay)) = self.get_overlay() {
+                        self.apply_cursor(overlay.current_tool().cursor_shape(), qh);
                     }
                 }
                 PointerEventKind::Leave { .. } => {
@@ -375,7 +402,7 @@ impl PointerHandler for View {
                     ptr.pos = event.position;
 
                     if ptr.pressed
-                        && let Some(overlay) = self.model.overlay.as_ref()
+                        && let Some(OverlayState::Ready(overlay)) = self.overlay.as_mut()
                     {
                         let from = Point {
                             x: prev.0,
@@ -385,8 +412,8 @@ impl PointerHandler for View {
                             x: event.position.0,
                             y: event.position.1,
                         };
-                        let cmd = overlay.draw(from, to);
-                        self.dispatch_command(qh, cmd);
+                        let damage = overlay.on_drag(from, to);
+                        self.mark_dirty(qh, damage);
                     }
                 }
                 PointerEventKind::Press { button, .. } => {
@@ -397,13 +424,13 @@ impl PointerHandler for View {
                         ptr.pressed = true;
                         ptr.pos = event.position;
 
-                        if let Some(overlay) = self.model.overlay.as_ref() {
+                        if let Some(OverlayState::Ready(overlay)) = self.overlay.as_mut() {
                             let center = Point {
                                 x: event.position.0,
                                 y: event.position.1,
                             };
-                            let cmd = overlay.draw_dot(center);
-                            self.dispatch_command(qh, cmd);
+                            let damage = overlay.on_press(center);
+                            self.mark_dirty(qh, damage);
                         }
                     }
                 }
@@ -421,23 +448,23 @@ impl PointerHandler for View {
     }
 }
 
-impl ShmHandler for View {
+impl ShmHandler for App {
     fn shm_state(&mut self) -> &mut Shm {
         &mut self.wayland.shm
     }
 }
 
-delegate_compositor!(View);
-delegate_output!(View);
-delegate_shm!(View);
-delegate_seat!(View);
-delegate_keyboard!(View);
-delegate_pointer!(View);
-delegate_xdg_shell!(View);
-delegate_xdg_window!(View);
-delegate_registry!(View);
+delegate_compositor!(App);
+delegate_output!(App);
+delegate_shm!(App);
+delegate_seat!(App);
+delegate_keyboard!(App);
+delegate_pointer!(App);
+delegate_xdg_shell!(App);
+delegate_xdg_window!(App);
+delegate_registry!(App);
 
-impl ProvidesRegistryState for View {
+impl ProvidesRegistryState for App {
     fn registry(&mut self) -> &mut RegistryState {
         &mut self.wayland.registry_state
     }

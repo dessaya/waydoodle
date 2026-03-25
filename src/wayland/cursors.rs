@@ -13,8 +13,10 @@ use wayland_client::{
 use wayland_cursor::CursorTheme;
 use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1;
 
-use super::View;
-use crate::model::{CursorShape, ERASER_RADIUS};
+use crate::{
+    waydoodle::{CursorShape, Tool},
+    wayland::App,
+};
 
 pub(crate) struct TabletCursorState {
     cursor_surface: wl_surface::WlSurface,
@@ -27,19 +29,12 @@ impl TabletCursorState {
         conn: &Connection,
         compositor: &CompositorState,
         shm: &Shm,
-        qh: &QueueHandle<View>,
+        qh: &QueueHandle<App>,
     ) -> Self {
         let cursor_surface = compositor.create_surface(qh);
         let cursor_theme =
             CursorTheme::load(conn, shm.wl_shm().clone(), 24).expect("Failed to load cursor theme");
-        let eraser_cursor = CursorSurface::from_rgba(
-            include_bytes!("../../assets/eraser_cursor.rgba"),
-            (ERASER_RADIUS as i32) * 2 + 1,
-            (ERASER_RADIUS as i32) * 2 + 1,
-            compositor,
-            shm,
-            qh,
-        );
+        let eraser_cursor = CursorSurface::eraser(compositor, shm, qh);
         Self {
             cursor_surface,
             cursor_theme,
@@ -58,18 +53,11 @@ impl Cursors {
         compositor: &CompositorState,
         shm: &Shm,
         globals: &wayland_client::globals::GlobalList,
-        qh: &QueueHandle<View>,
+        qh: &QueueHandle<App>,
     ) -> Self {
         let shape_manager =
             CursorShapeManager::bind(globals, qh).expect("cursor shape manager not available");
-        let eraser = CursorSurface::from_rgba(
-            include_bytes!("../../assets/eraser_cursor.rgba"),
-            (ERASER_RADIUS as i32) * 2 + 1,
-            (ERASER_RADIUS as i32) * 2 + 1,
-            compositor,
-            shm,
-            qh,
-        );
+        let eraser = CursorSurface::eraser(compositor, shm, qh);
         Self {
             shape_manager,
             eraser,
@@ -87,6 +75,19 @@ struct CursorSurface {
 }
 
 impl CursorSurface {
+    fn eraser(compositor: &CompositorState, shm: &Shm, qh: &QueueHandle<App>) -> Self {
+        let eraser_radius = Tool::Eraser.brush_radius();
+        let side = (eraser_radius as i32) * 2 + 1;
+        Self::from_rgba(
+            include_bytes!("../../assets/eraser_cursor.rgba"),
+            side,
+            side,
+            compositor,
+            shm,
+            qh,
+        )
+    }
+
     /// Creates a cursor surface from raw RGBA pixel data.
     ///
     /// The hotspot is placed at the center of the image. `rgba` must contain
@@ -97,7 +98,7 @@ impl CursorSurface {
         height: i32,
         compositor: &CompositorState,
         shm: &Shm,
-        qh: &QueueHandle<View>,
+        qh: &QueueHandle<App>,
     ) -> Self {
         let stride = width * 4;
         let size = (width * height * 4) as usize;
@@ -134,7 +135,7 @@ impl CursorSurface {
     }
 }
 
-impl View {
+impl App {
     pub(super) fn apply_cursor(&mut self, shape: CursorShape, qh: &QueueHandle<Self>) {
         self.set_pointer_cursor(shape, qh);
         self.set_tablet_cursor(shape);

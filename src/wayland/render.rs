@@ -3,49 +3,15 @@ use smithay_client_toolkit::shm::slot::{Buffer, SlotPool};
 use wayland_client::QueueHandle;
 use wayland_client::protocol::wl_shm;
 
-use super::{OverlayState, View, ViewOverlay};
+use crate::canvas::Rect;
+use crate::{
+    waydoodle::Overlay as _,
+    wayland::{App, Overlay},
+};
 
-#[derive(Clone, Copy)]
-pub(crate) struct DirtyRect {
-    pub x: i32,
-    pub y: i32,
-    pub width: i32,
-    pub height: i32,
-}
+use super::OverlayState;
 
-impl DirtyRect {
-    pub fn full(width: u32, height: u32) -> Self {
-        Self {
-            x: 0,
-            y: 0,
-            width: width as i32,
-            height: height as i32,
-        }
-    }
-
-    pub fn merge(self, other: DirtyRect) -> Self {
-        let x0 = self.x.min(other.x);
-        let y0 = self.y.min(other.y);
-        let x1 = (self.x + self.width).max(other.x + other.width);
-        let y1 = (self.y + self.height).max(other.y + other.height);
-        Self {
-            x: x0,
-            y: y0,
-            width: x1 - x0,
-            height: y1 - y0,
-        }
-    }
-}
-
-impl ViewOverlay {
-    /// Returns a mutable reference to the back buffer's canvas (the one NOT
-    /// held by the compositor). Returns `None` only if the pool is in a bad
-    /// state.
-    pub fn back_canvas(&mut self) -> Option<&mut [u8]> {
-        let back = 1 - self.front;
-        self.pool.canvas(&self.buffers[back])
-    }
-
+impl Overlay {
     /// Returns the index of the back buffer.
     pub fn back_index(&self) -> usize {
         1 - self.front
@@ -102,8 +68,8 @@ impl ViewOverlay {
     }
 }
 
-impl View {
-    pub(super) fn mark_dirty(&mut self, qh: &QueueHandle<Self>, damage: DirtyRect) {
+impl App {
+    pub(super) fn mark_dirty(&mut self, qh: &QueueHandle<Self>, damage: Rect) {
         let overlay = match self.overlay.as_mut() {
             Some(OverlayState::Ready(o)) => o,
             _ => return,
@@ -139,8 +105,6 @@ impl View {
     }
 
     fn flush_frame(&mut self) {
-        let show_help = self.model.overlay.as_ref().is_some_and(|o| o.show_help);
-
         let overlay = match self.overlay.as_mut() {
             Some(OverlayState::Ready(o)) => o,
             _ => return,
@@ -151,6 +115,8 @@ impl View {
             None => return,
         };
 
+        let show_help = overlay.show_help();
+
         // Copy back-buffer contents into the front buffer so both stay in sync.
         // After this, both buffers contain identical drawing data.
         overlay.sync_buffers();
@@ -160,10 +126,8 @@ impl View {
         // drawing data, so after swap() the new back buffer (old front) is
         // free of any transient UI — no cleanup needed when help is dismissed.
         if show_help {
-            let width = overlay.width;
-            let height = overlay.height;
-            if let Some(canvas) = overlay.back_canvas() {
-                super::help::render_help(canvas, width, height);
+            if let Some(mut canvas) = overlay.back_canvas() {
+                super::help::render_help(&mut canvas);
             }
         }
 

@@ -1,6 +1,7 @@
-use std::time::Duration;
-
-use calloop::signals::{Signal, Signals};
+use calloop::{
+    channel::Event,
+    signals::{Signal, Signals},
+};
 use smithay_client_toolkit::{
     compositor::CompositorState, output::OutputState, reexports::calloop::EventLoop,
     reexports::calloop_wayland_source::WaylandSource, registry::RegistryState, seat::SeatState,
@@ -9,13 +10,17 @@ use smithay_client_toolkit::{
 use wayland_client::{Connection, globals::registry_queue_init};
 use wayland_protocols::wp::tablet::zv2::client::zwp_tablet_manager_v2;
 
-use crate::model::Waydoodle;
-use crate::tray::{TrayEvent, WaydoodleTray};
+use super::{
+    TabletState, WaylandState,
+    cursors::{Cursors, TabletCursorState},
+};
+use crate::{
+    tray::{TrayEvent, WaydoodleTray},
+    waydoodle::App as _,
+    wayland::App,
+};
 
-use super::cursors::{Cursors, TabletCursorState};
-use super::{TabletState, View, WaylandState};
-
-impl View {
+impl App {
     pub fn run() {
         // Block SIGUSR1 before spawning any background threads (e.g. the tray)
         // so they inherit the blocked mask. Signals::new() calls sigprocmask.
@@ -26,7 +31,7 @@ impl View {
             registry_queue_init(&conn).expect("Failed to initialize registry");
         let qh = event_queue.handle();
 
-        let mut event_loop: EventLoop<View> =
+        let mut event_loop: EventLoop<App> =
             EventLoop::try_new().expect("Failed to create event loop");
         let loop_handle = event_loop.handle();
 
@@ -79,7 +84,7 @@ impl View {
 
         let cursors = Cursors::new(&compositor_state, &shm, &globals, &qh);
 
-        let mut view = View {
+        let mut app = Self {
             wayland: WaylandState {
                 registry_state: RegistryState::new(&globals),
                 seat_state: SeatState::new(&globals, &qh),
@@ -93,19 +98,17 @@ impl View {
             cursors,
             tablet,
             overlay: None,
-            model: Waydoodle::new(),
             tray_handle,
             loop_handle: event_loop.handle(),
+            queue_handle: qh,
         };
 
         // Handle SIGUSR1 to toggle the overlay.
         {
-            let qh_clone = qh.clone();
             event_loop
                 .handle()
-                .insert_source(sigusr1, move |_, _, view| {
-                    let cmd = view.model.toggle_overlay();
-                    view.dispatch_command(&qh_clone, cmd);
+                .insert_source(sigusr1, move |_, _, app| {
+                    app.on_toggle_overlay();
                 })
                 .expect("Failed to insert signal source");
         }
@@ -113,17 +116,15 @@ impl View {
         // Register the tray event channel.
         {
             let loop_signal = event_loop.get_signal();
-            let qh_tray = qh.clone();
             event_loop
                 .handle()
-                .insert_source(tray_channel, move |event, _, view| {
-                    let calloop::channel::Event::Msg(tray_event) = event else {
+                .insert_source(tray_channel, move |event, _, app| {
+                    let Event::Msg(tray_event) = event else {
                         return;
                     };
                     match tray_event {
                         TrayEvent::ToggleOverlay => {
-                            let cmd = view.model.toggle_overlay();
-                            view.dispatch_command(&qh_tray, cmd);
+                            app.on_toggle_overlay();
                         }
                         TrayEvent::Quit => {
                             loop_signal.stop();
@@ -134,11 +135,11 @@ impl View {
         }
 
         event_loop
-            .run(Duration::from_millis(16), &mut view, |_| {})
+            .run(None, &mut app, |_| {})
             .expect("Event loop failed");
 
         // Shut down the tray service on exit.
-        if let Some(handle) = view.tray_handle.take() {
+        if let Some(handle) = app.tray_handle.take() {
             handle.shutdown();
         }
     }

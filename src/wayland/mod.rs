@@ -2,18 +2,16 @@
 //!
 //! This module implements the GUI using smithay-client-toolkit (SCTK). It owns
 //! the Wayland connection, event loop, SHM pool, XDG window, and input devices.
-//! The view drives the [`model::Waydoodle`] model and interprets the
-//! [`model::Command`] values it returns.
 
-mod commands;
+pub mod app;
 mod cursors;
-mod drawing;
 mod handlers;
 mod help;
-mod init;
+mod overlay;
 mod render;
 mod tablet;
 
+use ksni::blocking::Handle;
 use smithay_client_toolkit::{
     compositor::CompositorState,
     output::OutputState,
@@ -27,9 +25,8 @@ use smithay_client_toolkit::{
 };
 use wayland_client::protocol::{wl_keyboard, wl_pointer};
 
-use crate::{model::Waydoodle, tray::WaydoodleTray};
+use crate::{canvas::Rect, tray::WaydoodleTray, waydoodle::Tool};
 use cursors::Cursors;
-use render::DirtyRect;
 use tablet::TabletState;
 
 pub(crate) struct PointerState {
@@ -48,7 +45,7 @@ struct WaylandState {
     pub shm: Shm,
 }
 
-pub(crate) struct ViewOverlay {
+pub struct Overlay {
     pub window: Window,
     pub pool: SlotPool,
     pub buffers: [Buffer; 2],
@@ -56,13 +53,15 @@ pub(crate) struct ViewOverlay {
     pub front: usize,
     pub width: u32,
     pub height: u32,
-    pub pending_damage: Option<DirtyRect>,
+    pub pending_damage: Option<Rect>,
     pub frame_requested: bool,
+    pub tool: Tool,
+    pub help: bool,
 }
 
-pub(crate) enum OverlayState {
+pub enum OverlayState {
     Pending(Window),
-    Ready(ViewOverlay),
+    Ready(Overlay),
 }
 
 impl OverlayState {
@@ -74,14 +73,14 @@ impl OverlayState {
     }
 }
 
-pub struct View {
+pub struct App {
     wayland: WaylandState,
     keyboard: Option<wl_keyboard::WlKeyboard>,
     cursors: Cursors,
     tablet: Option<TabletState>,
     overlay: Option<OverlayState>,
     pointer: Option<PointerState>,
-    tray_handle: Option<ksni::blocking::Handle<WaydoodleTray>>,
+    tray_handle: Option<Handle<WaydoodleTray>>,
     loop_handle: calloop::LoopHandle<'static, Self>,
-    model: Waydoodle,
+    queue_handle: wayland_client::QueueHandle<Self>,
 }
