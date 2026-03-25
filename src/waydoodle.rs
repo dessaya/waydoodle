@@ -235,3 +235,427 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::canvas::{Canvas, Point};
+
+    const TEST_WIDTH: u32 = 64;
+    const TEST_HEIGHT: u32 = 64;
+
+    struct MockOverlay {
+        buf: Vec<u8>,
+        width: u32,
+        height: u32,
+        tool: Tool,
+        help: bool,
+    }
+
+    impl MockOverlay {
+        fn new(width: u32, height: u32) -> Self {
+            Self {
+                buf: vec![0u8; (width * height * 4) as usize],
+                width,
+                height,
+                tool: DEFAULT_TOOL,
+                help: false,
+            }
+        }
+    }
+
+    impl OverlayCanvas for MockOverlay {
+        fn back_canvas(&mut self) -> Option<Canvas<'_>> {
+            Some(Canvas {
+                buf: &mut self.buf,
+                width: self.width,
+                height: self.height,
+            })
+        }
+    }
+
+    impl OverlayTool for MockOverlay {
+        fn current_tool(&self) -> Tool {
+            self.tool
+        }
+
+        fn set_current_tool(&mut self, tool: Tool) {
+            self.tool = tool;
+        }
+    }
+
+    impl OverlayHelp for MockOverlay {
+        fn show_help(&self) -> bool {
+            self.help
+        }
+
+        fn set_show_help(&mut self, show: bool) {
+            self.help = show;
+        }
+    }
+
+    struct MockApp {
+        overlay: Option<Option<MockOverlay>>,
+    }
+
+    impl MockApp {
+        fn new() -> Self {
+            Self { overlay: None }
+        }
+
+        fn with_pending() -> Self {
+            Self {
+                overlay: Some(None),
+            }
+        }
+
+        fn with_overlay() -> Self {
+            Self {
+                overlay: Some(Some(MockOverlay::new(TEST_WIDTH, TEST_HEIGHT))),
+            }
+        }
+    }
+
+    impl App<MockOverlay> for MockApp {
+        fn create_overlay(&mut self) {
+            self.overlay = Some(Some(MockOverlay::new(TEST_WIDTH, TEST_HEIGHT)));
+        }
+
+        fn destroy_overlay(&mut self) {
+            self.overlay = None;
+        }
+
+        fn get_overlay(&self) -> Option<Option<&MockOverlay>> {
+            match &self.overlay {
+                None => None,
+                Some(None) => Some(None),
+                Some(Some(o)) => Some(Some(o)),
+            }
+        }
+    }
+
+    fn pixel_at(buf: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
+        let offset = (y as usize * width as usize + x as usize) * 4;
+        [
+            buf[offset],
+            buf[offset + 1],
+            buf[offset + 2],
+            buf[offset + 3],
+        ]
+    }
+
+    // ── Tool tests ──
+
+    #[test]
+    fn pen_brush_radius_is_1_5() {
+        assert_eq!(Tool::Pen(RED).brush_radius(), 1.5);
+    }
+
+    #[test]
+    fn eraser_brush_radius_is_10() {
+        assert_eq!(Tool::Eraser.brush_radius(), 10.0);
+    }
+
+    #[test]
+    fn pen_cursor_shape_is_crosshair() {
+        assert_eq!(Tool::Pen(RED).cursor_shape(), CursorShape::Crosshair);
+    }
+
+    #[test]
+    fn eraser_cursor_shape_is_circle() {
+        assert_eq!(Tool::Eraser.cursor_shape(), CursorShape::Circle);
+    }
+
+    #[test]
+    fn pen_pixel_color_returns_its_color() {
+        assert_eq!(Tool::Pen(RED).pixel_color(), RED);
+        assert_eq!(Tool::Pen(BLUE).pixel_color(), BLUE);
+        assert_eq!(Tool::Pen(GREEN).pixel_color(), GREEN);
+    }
+
+    #[test]
+    fn eraser_pixel_color_returns_transparent() {
+        assert_eq!(Tool::Eraser.pixel_color(), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn default_tool_is_red_pen() {
+        assert_eq!(DEFAULT_TOOL, Tool::Pen(RED));
+    }
+
+    // ── ToolInfo::swatch tests ──
+
+    #[test]
+    fn swatch_returns_some_for_pen_entries() {
+        for info in ALL_KEYS {
+            match info.action {
+                KeyAction::SetTool(Tool::Pen(color)) => {
+                    assert_eq!(info.swatch(), Some(u32::from_le_bytes(color)));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn swatch_returns_none_for_non_pen_entries() {
+        for info in ALL_KEYS {
+            match info.action {
+                KeyAction::SetTool(Tool::Pen(_)) => {}
+                _ => {
+                    assert_eq!(info.swatch(), None);
+                }
+            }
+        }
+    }
+
+    // ── ALL_KEYS tests ──
+
+    #[test]
+    fn all_keys_contains_expected_keysyms() {
+        let expected = [
+            Keysym::r,
+            Keysym::g,
+            Keysym::b,
+            Keysym::y,
+            Keysym::m,
+            Keysym::n,
+            Keysym::e,
+            Keysym::c,
+            Keysym::Escape,
+            Keysym::F1,
+        ];
+        for ks in &expected {
+            assert!(
+                ALL_KEYS.iter().any(|i| i.keysym == *ks),
+                "ALL_KEYS missing keysym {:?}",
+                ks
+            );
+        }
+        assert_eq!(ALL_KEYS.len(), expected.len());
+    }
+
+    #[test]
+    fn all_keys_maps_keysym_to_correct_action() {
+        let cases: &[(Keysym, KeyAction)] = &[
+            (Keysym::r, KeyAction::SetTool(Tool::Pen(RED))),
+            (Keysym::g, KeyAction::SetTool(Tool::Pen(GREEN))),
+            (Keysym::b, KeyAction::SetTool(Tool::Pen(BLUE))),
+            (Keysym::y, KeyAction::SetTool(Tool::Pen(YELLOW))),
+            (Keysym::m, KeyAction::SetTool(Tool::Pen(MAGENTA))),
+            (Keysym::n, KeyAction::SetTool(Tool::Pen(CYAN))),
+            (Keysym::e, KeyAction::SetTool(Tool::Eraser)),
+            (Keysym::c, KeyAction::Clear),
+            (Keysym::Escape, KeyAction::HideOverlay),
+            (Keysym::F1, KeyAction::ToggleHelp),
+        ];
+        for (keysym, expected_action) in cases {
+            let info = ALL_KEYS.iter().find(|i| i.keysym == *keysym).unwrap();
+            assert_eq!(
+                info.action, *expected_action,
+                "wrong action for {:?}",
+                keysym
+            );
+        }
+    }
+
+    // ── Overlay::on_key_pressed tests ──
+
+    #[test]
+    fn on_key_pressed_r_sets_red_pen() {
+        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        overlay.tool = Tool::Eraser;
+        let (keep, redraw) = overlay.on_key_pressed(Keysym::r);
+        assert!(keep);
+        assert!(!redraw);
+        assert_eq!(overlay.tool, Tool::Pen(RED));
+    }
+
+    #[test]
+    fn on_key_pressed_e_sets_eraser() {
+        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        let (keep, redraw) = overlay.on_key_pressed(Keysym::e);
+        assert!(keep);
+        assert!(!redraw);
+        assert_eq!(overlay.tool, Tool::Eraser);
+    }
+
+    #[test]
+    fn on_key_pressed_c_clears_canvas() {
+        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        // Draw something first so the buffer is non-zero
+        overlay.buf[0..4].copy_from_slice(&RED);
+        overlay.buf[100..104].copy_from_slice(&BLUE);
+
+        let (keep, redraw) = overlay.on_key_pressed(Keysym::c);
+        assert!(keep);
+        assert!(redraw);
+        assert!(overlay.buf.iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn on_key_pressed_f1_toggles_help() {
+        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        assert!(!overlay.help);
+
+        let (keep, redraw) = overlay.on_key_pressed(Keysym::F1);
+        assert!(keep);
+        assert!(redraw);
+        assert!(overlay.help);
+    }
+
+    #[test]
+    fn on_key_pressed_escape_returns_hide() {
+        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        let (keep, redraw) = overlay.on_key_pressed(Keysym::Escape);
+        assert!(!keep);
+        assert!(!redraw);
+    }
+
+    #[test]
+    fn on_key_pressed_unbound_key_changes_nothing() {
+        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        let original_tool = overlay.tool;
+        let original_help = overlay.help;
+
+        let (keep, redraw) = overlay.on_key_pressed(Keysym::z);
+        assert!(keep);
+        assert!(!redraw);
+        assert_eq!(overlay.tool, original_tool);
+        assert_eq!(overlay.help, original_help);
+    }
+
+    // ── Overlay::on_drag tests ──
+
+    #[test]
+    fn on_drag_with_pen_draws_pixels() {
+        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        overlay.tool = Tool::Pen(RED);
+
+        let from = Point { x: 10.0, y: 10.0 };
+        let to = Point { x: 20.0, y: 10.0 };
+        let damage = overlay.on_drag(from, to);
+
+        assert!(damage.width > 0);
+        assert!(damage.height > 0);
+
+        // Check that at least some pixels along the path are red
+        let mut found_red = false;
+        for x in 10..=20 {
+            if pixel_at(&overlay.buf, TEST_WIDTH, x, 10) == RED {
+                found_red = true;
+                break;
+            }
+        }
+        assert!(found_red, "expected red pixels along the drag path");
+    }
+
+    #[test]
+    fn on_drag_with_eraser_clears_pixels() {
+        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        // First paint a horizontal stripe with red
+        overlay.tool = Tool::Pen(RED);
+        let from = Point { x: 10.0, y: 30.0 };
+        let to = Point { x: 30.0, y: 30.0 };
+        overlay.on_drag(from, to);
+
+        // Now erase along the same path
+        overlay.tool = Tool::Eraser;
+        let damage = overlay.on_drag(from, to);
+
+        assert!(damage.width > 0);
+        assert!(damage.height > 0);
+
+        // The center of the eraser path should be transparent
+        let center_pixel = pixel_at(&overlay.buf, TEST_WIDTH, 20, 30);
+        assert_eq!(center_pixel, [0, 0, 0, 0]);
+    }
+
+    // ── Overlay::on_press tests ──
+
+    #[test]
+    fn on_press_draws_circle_at_point() {
+        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        overlay.tool = Tool::Pen(GREEN);
+
+        let center = Point { x: 32.0, y: 32.0 };
+        let damage = overlay.on_press(center);
+
+        assert!(damage.width > 0);
+        assert!(damage.height > 0);
+
+        // The center pixel should be green
+        let p = pixel_at(&overlay.buf, TEST_WIDTH, 32, 32);
+        assert_eq!(p, GREEN);
+    }
+
+    // ── Overlay::on_size_changed tests ──
+
+    #[test]
+    fn on_size_changed_clears_canvas_and_returns_full_rect() {
+        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        // Paint something
+        overlay.buf[0..4].copy_from_slice(&RED);
+
+        let rect = overlay.on_size_changed();
+        let rect = rect.unwrap();
+        assert_eq!(rect.x, 0);
+        assert_eq!(rect.y, 0);
+        assert_eq!(rect.width, TEST_WIDTH as i32);
+        assert_eq!(rect.height, TEST_HEIGHT as i32);
+        assert!(overlay.buf.iter().all(|&b| b == 0));
+    }
+
+    // ── OverlayHelp::on_toggle_help tests ──
+
+    #[test]
+    fn toggle_help_false_to_true() {
+        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        assert!(!overlay.show_help());
+        overlay.on_toggle_help();
+        assert!(overlay.show_help());
+    }
+
+    #[test]
+    fn toggle_help_true_to_false() {
+        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        overlay.help = true;
+        assert!(overlay.show_help());
+        overlay.on_toggle_help();
+        assert!(!overlay.show_help());
+    }
+
+    // ── App::on_toggle_overlay tests ──
+
+    #[test]
+    fn toggle_overlay_when_none_creates_overlay() {
+        let mut app = MockApp::new();
+        assert!(app.get_overlay().is_none());
+
+        app.on_toggle_overlay();
+
+        let overlay = app.get_overlay();
+        assert!(overlay.is_some());
+        assert!(overlay.unwrap().is_some());
+    }
+
+    #[test]
+    fn toggle_overlay_when_pending_does_nothing() {
+        let mut app = MockApp::with_pending();
+        assert!(matches!(app.get_overlay(), Some(None)));
+
+        app.on_toggle_overlay();
+
+        assert!(matches!(app.get_overlay(), Some(None)));
+    }
+
+    #[test]
+    fn toggle_overlay_when_ready_destroys_overlay() {
+        let mut app = MockApp::with_overlay();
+        assert!(matches!(app.get_overlay(), Some(Some(_))));
+
+        app.on_toggle_overlay();
+
+        assert!(app.get_overlay().is_none());
+    }
+}

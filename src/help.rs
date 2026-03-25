@@ -126,3 +126,132 @@ pub(crate) fn render_help(canvas: &mut Canvas) -> Rect {
         height: (panel_h as i32).min(canvas.height as i32 - panel_y.max(0)),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::canvas::Canvas;
+
+    fn make_canvas(buf: &mut Vec<u8>, w: u32, h: u32) -> Canvas<'_> {
+        buf.resize((w * h * 4) as usize, 0);
+        Canvas {
+            buf,
+            width: w,
+            height: h,
+        }
+    }
+
+    fn pixel_at(buf: &[u8], w: u32, x: u32, y: u32) -> [u8; 4] {
+        let off = (y as usize * w as usize + x as usize) * 4;
+        [buf[off], buf[off + 1], buf[off + 2], buf[off + 3]]
+    }
+
+    #[test]
+    fn render_help_returns_valid_centered_damage_rect() {
+        let w = 800;
+        let h = 600;
+        let mut buf = Vec::new();
+        let mut canvas = make_canvas(&mut buf, w, h);
+
+        let damage = render_help(&mut canvas);
+
+        // Damage rect must be fully within canvas bounds.
+        assert!(damage.x >= 0);
+        assert!(damage.y >= 0);
+        assert!(damage.x + damage.width <= w as i32);
+        assert!(damage.y + damage.height <= h as i32);
+
+        // Panel should be smaller than the canvas and centered, so there
+        // should be margins on all sides.
+        assert!(damage.x > 0, "expected left margin, got x={}", damage.x);
+        assert!(damage.y > 0, "expected top margin, got y={}", damage.y);
+        assert!(damage.x + damage.width < w as i32, "expected right margin");
+        assert!(
+            damage.y + damage.height < h as i32,
+            "expected bottom margin"
+        );
+
+        // Rough centering check: the left and right margins should be equal.
+        let left_margin = damage.x;
+        let right_margin = w as i32 - (damage.x + damage.width);
+        assert!(
+            (left_margin - right_margin).abs() <= 1,
+            "panel not horizontally centered: left={left_margin}, right={right_margin}"
+        );
+        let top_margin = damage.y;
+        let bottom_margin = h as i32 - (damage.y + damage.height);
+        assert!(
+            (top_margin - bottom_margin).abs() <= 1,
+            "panel not vertically centered: top={top_margin}, bottom={bottom_margin}"
+        );
+    }
+
+    #[test]
+    fn render_help_draws_panel_background_pixels() {
+        let w = 800;
+        let h = 600;
+        let mut buf = Vec::new();
+        let mut canvas = make_canvas(&mut buf, w, h);
+
+        let damage = render_help(&mut canvas);
+
+        // A pixel in the interior of the damage rect should be non-transparent
+        // (it should have the panel background or text drawn on it).
+        let cx = (damage.x + damage.width / 2) as u32;
+        let cy = (damage.y + damage.height / 2) as u32;
+        let center = pixel_at(&buf, w, cx, cy);
+        assert_ne!(
+            center,
+            [0, 0, 0, 0],
+            "center of help panel should not be transparent"
+        );
+
+        // A pixel well outside the panel should still be transparent.
+        assert_eq!(pixel_at(&buf, w, 0, 0), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn render_help_on_tiny_canvas_clamps_to_bounds() {
+        // Canvas smaller than the help panel.
+        let w = 50;
+        let h = 30;
+        let mut buf = Vec::new();
+        let mut canvas = make_canvas(&mut buf, w, h);
+
+        let damage = render_help(&mut canvas);
+
+        // Damage rect must still be within canvas bounds.
+        assert!(damage.x >= 0);
+        assert!(damage.y >= 0);
+        assert!(damage.width > 0);
+        assert!(damage.height > 0);
+        assert!(damage.x + damage.width <= w as i32);
+        assert!(damage.y + damage.height <= h as i32);
+    }
+
+    #[test]
+    fn render_help_has_border_pixels() {
+        let w = 800;
+        let h = 600;
+        let mut buf = Vec::new();
+        let mut canvas = make_canvas(&mut buf, w, h);
+
+        let damage = render_help(&mut canvas);
+
+        // The top-left corner of the damage rect should have the border color.
+        let corner = pixel_at(&buf, w, damage.x as u32, damage.y as u32);
+        assert_eq!(
+            corner, BORDER_COLOR,
+            "top-left corner should be the border color"
+        );
+
+        // The bottom-right corner of the panel should also be the border.
+        let br_x = (damage.x + damage.width - 1) as u32;
+        let br_y = (damage.y + damage.height - 1) as u32;
+        let corner_br = pixel_at(&buf, w, br_x, br_y);
+        assert_eq!(
+            corner_br, BORDER_COLOR,
+            "bottom-right corner should be the border color"
+        );
+    }
+}
