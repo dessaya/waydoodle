@@ -1,10 +1,61 @@
-use smithay_client_toolkit::shell::{WaylandSurface, xdg::window::WindowDecorations};
+use smithay_client_toolkit::{
+    shell::{
+        WaylandSurface,
+        xdg::window::{Window, WindowDecorations},
+    },
+    shm::{
+        Shm,
+        slot::{Buffer, SlotPool},
+    },
+};
 
 use crate::{
-    canvas::Canvas,
+    canvas::{Canvas, Rect},
     waydoodle::{self, Tool},
-    wayland::{App, Overlay, OverlayState},
+    wayland::{App, OverlayState},
 };
+
+pub(super) struct Overlay {
+    pub window: Window,
+    pub width: u32,
+    pub height: u32,
+
+    // double buffering: we create two SHM buffers and alternate between them.
+    // The compositor always holds a reference to the "front" buffer, while we
+    // draw into the "back" buffer. When we want to update the display, we
+    // attach the back buffer and then swap them.
+    pub pool: SlotPool,
+    pub buffers: [Buffer; 2],
+    /// Index of the buffer currently attached to (owned by) the compositor.
+    pub front: usize,
+
+    pub pending_damage: Option<Rect>,
+    pub frame_requested: bool,
+
+    /// for OverlayTool
+    pub tool: Tool,
+
+    /// for OverlayHelp
+    pub help: bool,
+}
+
+impl App {
+    pub(super) fn create_overlay_pool_and_buffers(
+        shm: &Shm,
+        width: u32,
+        height: u32,
+    ) -> (SlotPool, [Buffer; 2]) {
+        log::debug!(
+            "Creating SHM slot pool and buffers for overlay ({}x{})",
+            width,
+            height
+        );
+        let size = width as usize * height as usize * 4 * 2;
+        let mut pool = SlotPool::new(size, shm).expect("Failed to create SHM slot pool");
+        let buffers = Overlay::create_buffers(&mut pool, width, height);
+        (pool, buffers)
+    }
+}
 
 impl waydoodle::App<Overlay> for App {
     fn create_overlay(&mut self) {
@@ -25,6 +76,7 @@ impl waydoodle::App<Overlay> for App {
         window.set_app_id("io.github.dessaya.waydoodle");
         window.set_maximized();
         window.commit();
+        log::debug!("Created overlay widow -- waiting for configure event to create buffers");
         self.overlay = Some(OverlayState::Pending(window));
     }
 
@@ -50,7 +102,7 @@ impl waydoodle::App<Overlay> for App {
     }
 }
 
-impl waydoodle::Overlay for Overlay {
+impl waydoodle::OverlayCanvas for Overlay {
     /// Returns a mutable reference to the back buffer's canvas (the one NOT
     /// held by the compositor). Returns `None` only if the pool is in a bad
     /// state.
@@ -65,7 +117,9 @@ impl waydoodle::Overlay for Overlay {
         }
         None
     }
+}
 
+impl waydoodle::OverlayTool for Overlay {
     fn current_tool(&self) -> Tool {
         self.tool
     }
@@ -73,7 +127,9 @@ impl waydoodle::Overlay for Overlay {
     fn set_current_tool(&mut self, tool: Tool) {
         self.tool = tool;
     }
+}
 
+impl waydoodle::OverlayHelp for Overlay {
     fn show_help(&self) -> bool {
         self.help
     }

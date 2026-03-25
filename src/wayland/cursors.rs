@@ -18,7 +18,7 @@ use crate::{
     wayland::App,
 };
 
-pub(crate) struct TabletCursorState {
+pub(super) struct TabletCursorState {
     cursor_surface: wl_surface::WlSurface,
     cursor_theme: CursorTheme,
     eraser_cursor: CursorSurface,
@@ -43,8 +43,8 @@ impl TabletCursorState {
     }
 }
 
-pub(crate) struct Cursors {
-    pub shape_manager: CursorShapeManager,
+pub(super) struct Cursors {
+    shape_manager: CursorShapeManager,
     eraser: CursorSurface,
 }
 

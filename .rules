@@ -35,6 +35,7 @@ annotate on the screen (e.g. for presentations).
   - e: eraser
   - c: clear (erase everything from the buffer)
   - Esc: hide the overlay (same as toggling)
+  - F1: toggle showing a help box with the list of keybindings
 
 - The overlay is a maximized window (not fullscreen) with no decorations. The Overlay
   object provides the pixel data for the entire window.
@@ -51,6 +52,14 @@ annotate on the screen (e.g. for presentations).
   Note: the pen pressure does not affect the thickness of the stroke.
 
 ## Conventions
+
+- The code architecture follows a model-view pattern. The top crate contains
+  the model, which implements the application logic and is agnostic about
+  Wayland (only exception is the `Keysym` import for key consts).
+
+  The view is implemented in the `wayland` crate. The view is responsible for
+  showing the tray icon, listening for SIGUSR1, rendering the overlay, handling
+  user input and calling the appropriate methods on the model.
 
 - Avoid writing top-level comments separating sections like:
 

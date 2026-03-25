@@ -1,118 +1,183 @@
+use smithay_client_toolkit::seat::keyboard::Keysym;
+
 use crate::canvas::{Canvas, Point, Rect};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Color {
-    Red,
-    Green,
-    Blue,
-    Yellow,
-    Magenta,
-    Cyan,
+pub(crate) enum KeyAction {
+    SetTool(Tool),
+    Clear,
+    ToggleHelp,
+    HideOverlay,
 }
 
-impl Color {
-    pub fn to_argb(self: Color) -> [u8; 4] {
-        let (r, g, b) = match self {
-            Color::Red => (255, 0, 0),
-            Color::Green => (0, 255, 0),
-            Color::Blue => (0, 0, 255),
-            Color::Yellow => (255, 255, 0),
-            Color::Magenta => (255, 0, 255),
-            Color::Cyan => (0, 255, 255),
-        };
-        u32::from_be_bytes([255, r, g, b]).to_ne_bytes()
+pub(crate) struct ToolInfo {
+    pub action: KeyAction,
+    pub keysym: Keysym,
+    pub key_label: &'static str,
+    pub desc: &'static str,
+}
+
+impl ToolInfo {
+    pub(crate) fn swatch(&self) -> Option<u32> {
+        match self.action {
+            KeyAction::SetTool(Tool::Pen(color)) => Some(u32::from_le_bytes(color)),
+            _ => None,
+        }
     }
 }
 
+const fn argb(r: u8, g: u8, b: u8) -> [u8; 4] {
+    u32::from_be_bytes([255, r, g, b]).to_ne_bytes()
+}
+
+const RED: [u8; 4] = argb(255, 0, 0);
+const GREEN: [u8; 4] = argb(0, 255, 0);
+const BLUE: [u8; 4] = argb(0, 0, 255);
+const YELLOW: [u8; 4] = argb(255, 255, 0);
+const MAGENTA: [u8; 4] = argb(255, 0, 255);
+const CYAN: [u8; 4] = argb(0, 255, 255);
+
+pub(crate) const ALL_KEYS: &[ToolInfo] = &[
+    ToolInfo {
+        action: KeyAction::SetTool(Tool::Pen(RED)),
+        keysym: Keysym::r,
+        key_label: "R",
+        desc: "Red pen",
+    },
+    ToolInfo {
+        action: KeyAction::SetTool(Tool::Pen(GREEN)),
+        keysym: Keysym::g,
+        key_label: "G",
+        desc: "Green pen",
+    },
+    ToolInfo {
+        action: KeyAction::SetTool(Tool::Pen(BLUE)),
+        keysym: Keysym::b,
+        key_label: "B",
+        desc: "Blue pen",
+    },
+    ToolInfo {
+        action: KeyAction::SetTool(Tool::Pen(YELLOW)),
+        keysym: Keysym::y,
+        key_label: "Y",
+        desc: "Yellow pen",
+    },
+    ToolInfo {
+        action: KeyAction::SetTool(Tool::Pen(MAGENTA)),
+        keysym: Keysym::m,
+        key_label: "M",
+        desc: "Magenta pen",
+    },
+    ToolInfo {
+        action: KeyAction::SetTool(Tool::Pen(CYAN)),
+        keysym: Keysym::n,
+        key_label: "N",
+        desc: "Cyan pen",
+    },
+    ToolInfo {
+        action: KeyAction::SetTool(Tool::Eraser),
+        keysym: Keysym::e,
+        key_label: "E",
+        desc: "Eraser",
+    },
+    ToolInfo {
+        action: KeyAction::Clear,
+        keysym: Keysym::c,
+        key_label: "C",
+        desc: "Clear screen",
+    },
+    ToolInfo {
+        action: KeyAction::HideOverlay,
+        keysym: Keysym::Escape,
+        key_label: "Esc",
+        desc: "Hide overlay",
+    },
+    ToolInfo {
+        action: KeyAction::ToggleHelp,
+        keysym: Keysym::F1,
+        key_label: "F1",
+        desc: "Toggle this help",
+    },
+];
+
+pub(crate) const DEFAULT_TOOL: Tool = Tool::Pen(RED);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Tool {
-    Pen(Color),
+pub(crate) enum Tool {
+    Pen([u8; 4]),
     Eraser,
 }
 
 impl Tool {
-    pub fn brush_radius(self: Tool) -> f64 {
+    pub(crate) fn brush_radius(self) -> f64 {
         match self {
             Tool::Pen(_) => 1.5,
             Tool::Eraser => 10.0,
         }
     }
 
-    pub fn cursor_shape(self: Tool) -> CursorShape {
+    pub(crate) fn cursor_shape(self) -> CursorShape {
         match self {
             Tool::Pen(_) => CursorShape::Crosshair,
             Tool::Eraser => CursorShape::Circle,
         }
     }
 
-    pub fn pixel_color(self: Tool) -> [u8; 4] {
+    pub(crate) fn pixel_color(self) -> [u8; 4] {
         match self {
-            Tool::Pen(color) => color.to_argb(),
+            Tool::Pen(color) => color,
             Tool::Eraser => [0, 0, 0, 0],
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CursorShape {
+pub(crate) enum CursorShape {
     Crosshair,
     Circle,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Key {
-    R,
-    G,
-    B,
-    Y,
-    M,
-    N,
-    E,
-    C,
-    ESC,
-    F1,
+pub(crate) trait OverlayCanvas {
+    fn back_canvas(&mut self) -> Option<Canvas<'_>>;
 }
 
-pub trait Overlay {
-    fn back_canvas(&mut self) -> Option<Canvas<'_>>;
-
+pub(crate) trait OverlayTool {
     fn current_tool(&self) -> Tool;
     fn set_current_tool(&mut self, tool: Tool);
+}
 
+pub(crate) trait OverlayHelp {
     fn show_help(&self) -> bool;
     fn set_show_help(&mut self, show: bool);
 
     fn on_toggle_help(&mut self) {
         self.set_show_help(!self.show_help());
     }
+}
 
-    // Returns true if the overlay should remain active after this key press,
-    // false if it should be closed.
-    fn on_key_pressed(&mut self, key: Key) -> bool {
-        let new_tool = match key {
-            Key::R => Some(Tool::Pen(Color::Red)),
-            Key::G => Some(Tool::Pen(Color::Green)),
-            Key::B => Some(Tool::Pen(Color::Blue)),
-            Key::Y => Some(Tool::Pen(Color::Yellow)),
-            Key::M => Some(Tool::Pen(Color::Magenta)),
-            Key::N => Some(Tool::Pen(Color::Cyan)),
-            Key::E => Some(Tool::Eraser),
-            Key::C => {
+pub(crate) trait Overlay: OverlayCanvas + OverlayTool + OverlayHelp {
+    // Returns (keep_open, redraw)
+    fn on_key_pressed(&mut self, keysym: Keysym) -> (bool, bool) {
+        let Some(info) = ALL_KEYS.iter().find(|i| i.keysym == keysym) else {
+            return (true, false);
+        };
+        match info.action {
+            KeyAction::SetTool(tool) => {
+                self.set_current_tool(tool);
+                (true, false)
+            }
+            KeyAction::Clear => {
                 if let Some(mut canvas) = self.back_canvas() {
                     canvas.clear();
                 }
-                None
+                (true, true)
             }
-            Key::ESC => return false,
-            Key::F1 => {
+            KeyAction::ToggleHelp => {
                 self.on_toggle_help();
-                None
+                (true, true)
             }
-        };
-        if let Some(tool) = new_tool {
-            self.set_current_tool(tool);
+            KeyAction::HideOverlay => (false, false),
         }
-        true
     }
 
     fn on_drag(&mut self, from: Point, to: Point) -> Rect {
@@ -141,19 +206,20 @@ pub trait Overlay {
             })
     }
 
-    fn on_size_changed(&mut self) -> Rect {
-        self.back_canvas().map(|mut c| c.clear()).unwrap_or(Rect {
-            x: 0,
-            y: 0,
-            width: 0,
-            height: 0,
-        })
+    fn on_size_changed(&mut self) -> Option<Rect> {
+        if let Some(mut canvas) = self.back_canvas() {
+            Some(canvas.clear())
+        } else {
+            None
+        }
     }
 }
 
-pub trait App<O>
+impl<T: OverlayCanvas + OverlayTool + OverlayHelp> Overlay for T {}
+
+pub(crate) trait App<O>
 where
-    O: Overlay,
+    O: OverlayCanvas + OverlayTool + OverlayHelp,
 {
     fn create_overlay(&mut self);
     fn destroy_overlay(&mut self);

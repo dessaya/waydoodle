@@ -1,6 +1,6 @@
 [package]
 name = "waydoodle"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 description = "A minimalistic screen annotation tool for Wayland"
 license = "MIT"

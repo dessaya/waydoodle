@@ -1,17 +1,28 @@
 use std::io::BufReader;
+use std::sync::LazyLock;
 
 use bdf_reader::Font;
 
 use crate::canvas::{Canvas, GLYPH_H, GLYPH_W, Rect};
+use crate::waydoodle::ALL_KEYS;
 
-const FONT_REGULAR: &[u8] = include_bytes!("../assets/Tamzen8x16r.bdf");
-const FONT_BOLD: &[u8] = include_bytes!("../assets/Tamzen8x16b.bdf");
+const FONT_REGULAR_BDF: &[u8] = include_bytes!("../assets/Tamzen8x16r.bdf");
+const FONT_BOLD_BDF: &[u8] = include_bytes!("../assets/Tamzen8x16b.bdf");
+
+static FONT_REGULAR: LazyLock<Font> = LazyLock::new(|| {
+    Font::read(BufReader::new(FONT_REGULAR_BDF)).expect("Failed to parse regular BDF font")
+});
+static FONT_BOLD: LazyLock<Font> = LazyLock::new(|| {
+    Font::read(BufReader::new(FONT_BOLD_BDF)).expect("Failed to parse bold BDF font")
+});
+
 const LINE_HEIGHT: u32 = GLYPH_H + 4;
 const PADDING: u32 = 20;
 const PANEL_BG: [u8; 4] = (0xE0202020u32).to_le_bytes();
 const TEXT_COLOR_NORMAL: [u8; 4] = (0xFFDDDDDDu32).to_le_bytes();
 const TEXT_COLOR_KEY: [u8; 4] = (0xFFFFCC00u32).to_le_bytes();
 const TITLE_COLOR: [u8; 4] = (0xFFFFFFFFu32).to_le_bytes();
+
 struct HelpLine {
     key: &'static str,
     desc: &'static str,
@@ -24,67 +35,25 @@ const BORDER_COLOR: [u8; 4] = (0xFF666666u32).to_le_bytes();
 
 const HELP_TITLE: &str = "Waydoodle - Keyboard Shortcuts";
 
-const HELP_LINES: &[HelpLine] = &[
-    HelpLine {
-        key: "R",
-        desc: "Red pen",
-        color: Some(0xFFFF0000),
-    },
-    HelpLine {
-        key: "G",
-        desc: "Green pen",
-        color: Some(0xFF00FF00),
-    },
-    HelpLine {
-        key: "B",
-        desc: "Blue pen",
-        color: Some(0xFF0000FF),
-    },
-    HelpLine {
-        key: "Y",
-        desc: "Yellow pen",
-        color: Some(0xFFFFFF00),
-    },
-    HelpLine {
-        key: "M",
-        desc: "Magenta pen",
-        color: Some(0xFFFF00FF),
-    },
-    HelpLine {
-        key: "N",
-        desc: "Cyan pen",
-        color: Some(0xFF00FFFF),
-    },
-    HelpLine {
-        key: "E",
-        desc: "Eraser",
-        color: None,
-    },
-    HelpLine {
-        key: "C",
-        desc: "Clear screen",
-        color: None,
-    },
-    HelpLine {
-        key: "Esc",
-        desc: "Hide overlay",
-        color: None,
-    },
-    HelpLine {
-        key: "F1",
-        desc: "Toggle this help",
-        color: None,
-    },
-];
+static HELP_LINES: LazyLock<Vec<HelpLine>> = LazyLock::new(|| {
+    ALL_KEYS
+        .iter()
+        .map(|info| HelpLine {
+            key: info.key_label,
+            desc: info.desc,
+            color: info.swatch(),
+        })
+        .collect()
+});
 
-pub fn render_help(canvas: &mut Canvas) -> Rect {
-    let font_regular =
-        Font::read(BufReader::new(FONT_REGULAR)).expect("Failed to parse regular BDF font");
-    let font_bold = Font::read(BufReader::new(FONT_BOLD)).expect("Failed to parse bold BDF font");
+pub(crate) fn render_help(canvas: &mut Canvas) -> Rect {
+    let font_regular = &*FONT_REGULAR;
+    let font_bold = &*FONT_BOLD;
+    let help_lines = &*HELP_LINES;
 
     let key_col_width = {
         let mut max_w = 0u32;
-        for line in HELP_LINES {
+        for line in help_lines {
             max_w = max_w.max(Canvas::text_width(line.key));
         }
         max_w + COLOR_BOX_GAP
@@ -92,7 +61,7 @@ pub fn render_help(canvas: &mut Canvas) -> Rect {
 
     let desc_col_width = {
         let mut max_w = 0u32;
-        for line in HELP_LINES {
+        for line in help_lines {
             max_w = max_w.max(Canvas::text_width(line.desc));
         }
         max_w
@@ -103,7 +72,7 @@ pub fn render_help(canvas: &mut Canvas) -> Rect {
     let title_width = Canvas::text_width(HELP_TITLE);
     let inner_width = content_width.max(title_width);
 
-    let num_lines = HELP_LINES.len() as u32;
+    let num_lines = help_lines.len() as u32;
     let inner_height = LINE_HEIGHT + LINE_HEIGHT / 2 + num_lines * LINE_HEIGHT;
 
     let panel_w = inner_width + PADDING * 2;
@@ -119,14 +88,14 @@ pub fn render_help(canvas: &mut Canvas) -> Rect {
     let mut row_y = panel_y + PADDING as i32;
 
     let title_x = panel_x + (panel_w as i32 - title_width as i32) / 2;
-    canvas.draw_text(&font_bold, HELP_TITLE, title_x, row_y, TITLE_COLOR);
+    canvas.draw_text(font_bold, HELP_TITLE, title_x, row_y, TITLE_COLOR);
     row_y += LINE_HEIGHT as i32 + LINE_HEIGHT as i32 / 2;
 
-    for line in HELP_LINES {
+    for line in help_lines {
         let key_offset =
             key_col_width as i32 - Canvas::text_width(line.key) as i32 - COLOR_BOX_GAP as i32;
         canvas.draw_text(
-            &font_bold,
+            font_bold,
             line.key,
             text_x + key_offset,
             row_y,
@@ -146,7 +115,7 @@ pub fn render_help(canvas: &mut Canvas) -> Rect {
             );
         }
 
-        canvas.draw_text(&font_regular, line.desc, desc_x, row_y, TEXT_COLOR_NORMAL);
+        canvas.draw_text(font_regular, line.desc, desc_x, row_y, TEXT_COLOR_NORMAL);
         row_y += LINE_HEIGHT as i32;
     }
 

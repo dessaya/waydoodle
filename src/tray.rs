@@ -2,17 +2,17 @@ use calloop::channel::Sender;
 use ksni::{MenuItem, Tray, menu::StandardItem};
 
 #[derive(Debug, Clone)]
-pub enum TrayEvent {
+pub(crate) enum TrayEvent {
     ToggleOverlay,
     Quit,
 }
 
-pub struct WaydoodleTray {
+pub(crate) struct WaydoodleTray {
     sender: Sender<TrayEvent>,
 }
 
 impl WaydoodleTray {
-    pub fn new(sender: Sender<TrayEvent>) -> Self {
+    pub(crate) fn new(sender: Sender<TrayEvent>) -> Self {
         Self { sender }
     }
 }

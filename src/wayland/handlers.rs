@@ -14,10 +14,7 @@ use smithay_client_toolkit::{
         WaylandSurface,
         xdg::window::{Window, WindowConfigure, WindowHandler},
     },
-    shm::{
-        Shm, ShmHandler,
-        slot::{Buffer, SlotPool},
-    },
+    shm::{Shm, ShmHandler},
 };
 use wayland_client::{
     Connection, QueueHandle,
@@ -26,7 +23,7 @@ use wayland_client::{
 
 use crate::{
     canvas::{Point, Rect},
-    waydoodle::{App as _, Color, Key, Overlay as _, Tool},
+    waydoodle::{App as _, DEFAULT_TOOL, Overlay as _, OverlayTool as _},
     wayland::{App, Overlay},
 };
 
@@ -58,7 +55,10 @@ impl CompositorHandler for App {
         _surface: &wl_surface::WlSurface,
         _time: u32,
     ) {
-        self.on_frame_callback(qh);
+        match self.overlay.as_mut() {
+            Some(OverlayState::Ready(o)) => o.on_frame_callback(qh),
+            _ => return,
+        }
     }
 
     fn surface_enter(
@@ -110,19 +110,6 @@ impl OutputHandler for App {
     }
 }
 
-impl App {
-    pub(super) fn create_overlay_pool_and_buffers(
-        shm: &Shm,
-        width: u32,
-        height: u32,
-    ) -> (SlotPool, [Buffer; 2]) {
-        let size = width as usize * height as usize * 4 * 2;
-        let mut pool = SlotPool::new(size, shm).expect("Failed to create SHM slot pool");
-        let buffers = Overlay::create_buffers(&mut pool, width, height);
-        (pool, buffers)
-    }
-}
-
 impl WindowHandler for App {
     fn request_close(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _window: &Window) {}
 
@@ -134,18 +121,24 @@ impl WindowHandler for App {
         configure: WindowConfigure,
         _serial: u32,
     ) {
-        let state = match self.overlay.take() {
-            Some(s) => s,
-            None => return,
+        log::debug!(
+            "Received configure event for overlay window: {:?}",
+            configure
+        );
+        let (Some(w), Some(h)) = configure.new_size else {
+            return;
         };
+        let (width, height) = (w.get(), h.get());
 
-        match state {
-            OverlayState::Pending(window) => {
-                let width = configure.new_size.0.map(|v| v.get()).unwrap_or(1);
-                let height = configure.new_size.1.map(|v| v.get()).unwrap_or(1);
+        match &mut self.overlay {
+            Some(OverlayState::Pending(_)) => {
+                // Transition Pending → Ready: take the Window out and build the full Overlay.
+                let Some(OverlayState::Pending(window)) = self.overlay.take() else {
+                    unreachable!();
+                };
                 let (pool, buffers) =
                     Self::create_overlay_pool_and_buffers(&self.wayland.shm, width, height);
-                self.overlay = Some(OverlayState::Ready(Overlay {
+                let mut overlay = Overlay {
                     window,
                     pool,
                     buffers,
@@ -154,40 +147,32 @@ impl WindowHandler for App {
                     height,
                     pending_damage: None,
                     frame_requested: false,
-                    tool: Tool::Pen(Color::Red),
+                    tool: DEFAULT_TOOL,
                     help: false,
-                }));
-                self.mark_dirty(qh, Rect::new(width, height));
+                };
+                overlay.mark_dirty(qh, Rect::new(width, height));
+                self.overlay = Some(OverlayState::Ready(overlay));
             }
-            OverlayState::Ready(mut overlay) => {
-                let new_width = configure
-                    .new_size
-                    .0
-                    .map(|v| v.get())
-                    .unwrap_or(overlay.width);
-                let new_height = configure
-                    .new_size
-                    .1
-                    .map(|v| v.get())
-                    .unwrap_or(overlay.height);
-
-                if new_width != overlay.width || new_height != overlay.height {
-                    let (pool, buffers) = Self::create_overlay_pool_and_buffers(
-                        &self.wayland.shm,
-                        new_width,
-                        new_height,
+            Some(OverlayState::Ready(overlay)) => {
+                if width != overlay.width || height != overlay.height {
+                    log::debug!(
+                        "Overlay window resized to {}x{} -- recreating SHM buffers",
+                        width,
+                        height
                     );
+                    let (pool, buffers) =
+                        Self::create_overlay_pool_and_buffers(&self.wayland.shm, width, height);
                     overlay.pool = pool;
                     overlay.buffers = buffers;
                     overlay.front = 0;
-                    overlay.width = new_width;
-                    overlay.height = new_height;
-                    overlay.on_size_changed();
+                    overlay.width = width;
+                    overlay.height = height;
+                    if let Some(damage) = overlay.on_size_changed() {
+                        overlay.mark_dirty(qh, damage);
+                    }
                 }
-
-                self.overlay = Some(OverlayState::Ready(overlay));
-                self.mark_dirty(qh, Rect::new(new_width, new_height));
             }
+            None => {}
         }
     }
 }
@@ -299,30 +284,18 @@ impl KeyboardHandler for App {
         _serial: u32,
         event: KeyEvent,
     ) {
-        if let Some(OverlayState::Ready(overlay)) = self.overlay.as_mut() {
-            log::debug!("Key event received: {:?}", event);
-            let key = match event.keysym {
-                Keysym::r => Key::R,
-                Keysym::g => Key::G,
-                Keysym::b => Key::B,
-                Keysym::y => Key::Y,
-                Keysym::m => Key::M,
-                Keysym::n => Key::N,
-                Keysym::e => Key::E,
-                Keysym::c => Key::C,
-                Keysym::Escape => Key::ESC,
-                Keysym::F1 => Key::F1,
-                _ => return,
-            };
-            let keep_open = overlay.on_key_pressed(key);
-            let shape = overlay.current_tool().cursor_shape();
-            let damage = Rect::new(overlay.width, overlay.height);
-            if !keep_open {
-                self.on_toggle_overlay();
-            } else {
-                self.apply_cursor(shape, qh);
-                self.mark_dirty(qh, damage);
-            }
+        let Some(OverlayState::Ready(overlay)) = self.overlay.as_mut() else {
+            return;
+        };
+        let (keep_open, redraw) = overlay.on_key_pressed(event.keysym);
+        let shape = overlay.current_tool().cursor_shape();
+        if redraw {
+            overlay.mark_dirty(qh, Rect::new(overlay.width, overlay.height));
+        }
+        if !keep_open {
+            self.on_toggle_overlay();
+        } else {
+            self.apply_cursor(shape, qh);
         }
     }
 
@@ -413,7 +386,7 @@ impl PointerHandler for App {
                             y: event.position.1,
                         };
                         let damage = overlay.on_drag(from, to);
-                        self.mark_dirty(qh, damage);
+                        overlay.mark_dirty(qh, damage);
                     }
                 }
                 PointerEventKind::Press { button, .. } => {
@@ -430,7 +403,7 @@ impl PointerHandler for App {
                                 y: event.position.1,
                             };
                             let damage = overlay.on_press(center);
-                            self.mark_dirty(qh, damage);
+                            overlay.mark_dirty(qh, damage);
                         }
                     }
                 }

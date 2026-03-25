@@ -1,16 +1,16 @@
 use bdf_reader::Font;
 
-pub const GLYPH_W: u32 = 8;
-pub const GLYPH_H: u32 = 16;
+pub(crate) const GLYPH_W: u32 = 8;
+pub(crate) const GLYPH_H: u32 = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Point {
+pub(crate) struct Point {
     pub x: f64,
     pub y: f64,
 }
 
 #[derive(Clone, Copy)]
-pub struct Rect {
+pub(crate) struct Rect {
     pub x: i32,
     pub y: i32,
     pub width: i32,
@@ -41,7 +41,7 @@ impl Rect {
     }
 }
 
-pub struct Canvas<'a> {
+pub(crate) struct Canvas<'a> {
     pub buf: &'a mut [u8],
     pub width: u32,
     pub height: u32,
@@ -53,7 +53,7 @@ impl<'a> Canvas<'a> {
         Rect::new(self.width, self.height)
     }
 
-    pub fn set_pixel(&mut self, x: i32, y: i32, pixel: [u8; 4]) {
+    fn set_pixel(&mut self, x: i32, y: i32, pixel: [u8; 4]) {
         let width = self.width;
         let height = self.height;
         if x < 0 || y < 0 || x >= width as i32 || y >= height as i32 {

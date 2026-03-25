@@ -5,16 +5,20 @@ use wayland_protocols::wp::tablet::zv2::client::{
     zwp_tablet_v2,
 };
 
-use crate::{canvas::Point, waydoodle::Overlay as _, wayland::App};
+use crate::{
+    canvas::Point,
+    waydoodle::{Overlay as _, OverlayTool as _},
+    wayland::App,
+};
 
 use super::{OverlayState, cursors::TabletCursorState};
 
-pub(crate) struct ActiveTabletTool {
+pub(super) struct ActiveTabletTool {
     pub tool: zwp_tablet_tool_v2::ZwpTabletToolV2,
     pub serial: u32,
 }
 
-pub(crate) struct TabletState {
+pub(super) struct TabletState {
     pub manager: zwp_tablet_manager_v2::ZwpTabletManagerV2,
     pub seat: Option<zwp_tablet_seat_v2::ZwpTabletSeatV2>,
     pub cursor: TabletCursorState,
@@ -86,7 +90,7 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for App {
                 if let Some(OverlayState::Ready(overlay)) = state.overlay.as_mut() {
                     let center = Point { x: pos.0, y: pos.1 };
                     let damage = overlay.on_press(center);
-                    state.mark_dirty(qh, damage);
+                    overlay.mark_dirty(qh, damage);
                 }
             }
             zwp_tablet_tool_v2::Event::Up => {
@@ -111,7 +115,7 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for App {
                         };
                         let to = Point { x, y };
                         let damage = overlay.on_drag(from, to);
-                        state.mark_dirty(qh, damage);
+                        overlay.mark_dirty(qh, damage);
                     }
                 }
             }

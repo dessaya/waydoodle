@@ -21,7 +21,7 @@ use crate::{
 };
 
 impl App {
-    pub fn run() {
+    pub(crate) fn run() {
         // Block SIGUSR1 before spawning any background threads (e.g. the tray)
         // so they inherit the blocked mask. Signals::new() calls sigprocmask.
         let sigusr1 = Signals::new(&[Signal::SIGUSR1]).expect("Failed to register SIGUSR1");
