@@ -86,3 +86,6 @@ annotate on the screen (e.g. for presentations).
 
 - Avoid unwrap() or any other method that can panic. Instead, use proper error
   handling with `Result` and `?`.
+
+- Remember to update the README if any behavior changes, or if new features are
+  added.

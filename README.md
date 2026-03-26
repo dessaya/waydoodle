@@ -12,6 +12,7 @@ or [Wayscriber](https://wayscriber.com/), Waydoodle provides only the essentials
 - Change color (<kbd>r</kbd>, <kbd>g</kbd>, <kbd>b</kbd>, <kbd>y</kbd>, <kbd>m</kbd>, <kbd>n</kbd>)
 - Erase (<kbd>e</kbd>)
 - Clear (<kbd>c</kbd>)
+- Black/white background (<kbd>.</kbd>, <kbd>,</kbd>)
 - Undo (<kbd>u</kbd>)
 - On-screen help (<kbd>F1</kbd>)
 
@@ -63,6 +64,8 @@ While the overlay is visible:
 | <kbd>n</kbd> | Cyan pen |
 | <kbd>e</kbd> | Eraser |
 | <kbd>c</kbd> | Clear all |
+| <kbd>.</kbd> | Black background |
+| <kbd>,</kbd> | White background |
 | <kbd>u</kbd> | Undo |
 | <kbd>F1</kbd> | Toggle help screen |
 | <kbd>Esc</kbd> | Hide overlay |

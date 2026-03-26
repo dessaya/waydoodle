@@ -18,7 +18,7 @@ static FONT_BOLD: LazyLock<Font> = LazyLock::new(|| {
 
 const LINE_HEIGHT: u32 = GLYPH_H + 4;
 const PADDING: u32 = 20;
-const PANEL_BG: [u8; 4] = (0xE0202020u32).to_le_bytes();
+const PANEL_BG: [u8; 4] = (0xFF202020u32).to_le_bytes();
 const TEXT_COLOR_NORMAL: [u8; 4] = (0xFFDDDDDDu32).to_le_bytes();
 const TEXT_COLOR_KEY: [u8; 4] = (0xFFFFCC00u32).to_le_bytes();
 const TITLE_COLOR: [u8; 4] = (0xFFFFFFFFu32).to_le_bytes();

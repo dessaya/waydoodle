@@ -20,6 +20,7 @@ impl PointerState {
 pub(crate) enum KeyAction {
     SetTool(Tool),
     Clear,
+    FillBackground([u8; 4]),
     Undo,
     ToggleHelp,
     HideOverlay,
@@ -36,6 +37,7 @@ impl ToolInfo {
     pub(crate) fn swatch(&self) -> Option<u32> {
         match self.action {
             KeyAction::SetTool(Tool::Pen(color)) => Some(u32::from_le_bytes(color)),
+            KeyAction::FillBackground(color) => Some(u32::from_le_bytes(color)),
             _ => None,
         }
     }
@@ -51,6 +53,8 @@ const BLUE: [u8; 4] = argb(0, 0, 255);
 const YELLOW: [u8; 4] = argb(255, 255, 0);
 const MAGENTA: [u8; 4] = argb(255, 0, 255);
 const CYAN: [u8; 4] = argb(0, 255, 255);
+const BLACK: [u8; 4] = argb(0, 0, 0);
+const WHITE: [u8; 4] = argb(255, 255, 255);
 
 pub(crate) const ALL_KEYS: &[ToolInfo] = &[
     ToolInfo {
@@ -100,6 +104,18 @@ pub(crate) const ALL_KEYS: &[ToolInfo] = &[
         keysym: Keysym::c,
         key_label: "C",
         desc: "Clear screen",
+    },
+    ToolInfo {
+        action: KeyAction::FillBackground(BLACK),
+        keysym: Keysym::period,
+        key_label: ".",
+        desc: "Black background",
+    },
+    ToolInfo {
+        action: KeyAction::FillBackground(WHITE),
+        keysym: Keysym::comma,
+        key_label: ",",
+        desc: "White background",
     },
     ToolInfo {
         action: KeyAction::Undo,
@@ -168,6 +184,7 @@ pub(crate) struct Stroke {
 pub(crate) enum StrokeItem {
     Stroke(Stroke),
     Clear,
+    FillBackground([u8; 4]),
 }
 
 pub(crate) trait OverlayCanvas {
@@ -219,6 +236,9 @@ fn replay_strokes(canvas: &mut Canvas, strokes: &[StrokeItem]) {
             StrokeItem::Clear => {
                 canvas.clear();
             }
+            StrokeItem::FillBackground(color) => {
+                canvas.fill(*color);
+            }
         }
     }
 }
@@ -240,6 +260,13 @@ pub(crate) trait Overlay:
                 self.push_stroke(StrokeItem::Clear);
                 if let Some(mut canvas) = self.back_canvas() {
                     canvas.clear();
+                }
+                (true, true)
+            }
+            KeyAction::FillBackground(color) => {
+                self.push_stroke(StrokeItem::FillBackground(color));
+                if let Some(mut canvas) = self.back_canvas() {
+                    canvas.fill(color);
                 }
                 (true, true)
             }
@@ -527,7 +554,7 @@ mod tests {
     fn swatch_returns_none_for_non_pen_entries() {
         for info in ALL_KEYS {
             match info.action {
-                KeyAction::SetTool(Tool::Pen(_)) => {}
+                KeyAction::SetTool(Tool::Pen(_)) | KeyAction::FillBackground(_) => {}
                 _ => {
                     assert_eq!(info.swatch(), None);
                 }
@@ -546,6 +573,8 @@ mod tests {
             Keysym::n,
             Keysym::e,
             Keysym::c,
+            Keysym::period,
+            Keysym::comma,
             Keysym::u,
             Keysym::Escape,
             Keysym::F1,
@@ -571,6 +600,8 @@ mod tests {
             (Keysym::n, KeyAction::SetTool(Tool::Pen(CYAN))),
             (Keysym::e, KeyAction::SetTool(Tool::Eraser)),
             (Keysym::c, KeyAction::Clear),
+            (Keysym::period, KeyAction::FillBackground(BLACK)),
+            (Keysym::comma, KeyAction::FillBackground(WHITE)),
             (Keysym::u, KeyAction::Undo),
             (Keysym::Escape, KeyAction::HideOverlay),
             (Keysym::F1, KeyAction::ToggleHelp),
@@ -943,5 +974,62 @@ mod tests {
 
         assert!(overlay.strokes.is_empty());
         assert!(overlay.current_points.is_empty());
+    }
+
+    #[test]
+    fn on_key_pressed_period_fills_black_background() {
+        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+
+        let (keep, redraw) = overlay.on_key_pressed(Keysym::period);
+        assert!(keep);
+        assert!(redraw);
+        assert_eq!(overlay.strokes.len(), 1);
+        assert_eq!(pixel_at(&overlay.buf, TEST_WIDTH, 0, 0), BLACK);
+        assert_eq!(pixel_at(&overlay.buf, TEST_WIDTH, 50, 40), BLACK);
+    }
+
+    #[test]
+    fn on_key_pressed_comma_fills_white_background() {
+        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+
+        let (keep, redraw) = overlay.on_key_pressed(Keysym::comma);
+        assert!(keep);
+        assert!(redraw);
+        assert_eq!(overlay.strokes.len(), 1);
+        assert_eq!(pixel_at(&overlay.buf, TEST_WIDTH, 0, 0), WHITE);
+        assert_eq!(pixel_at(&overlay.buf, TEST_WIDTH, 50, 40), WHITE);
+    }
+
+    #[test]
+    fn fill_background_then_undo_restores_previous() {
+        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        overlay.tool = Tool::Pen(RED);
+        let mut ptr = PointerState::new();
+
+        overlay.on_pointer_press(&mut ptr, Point { x: 10.0, y: 10.0 });
+        overlay.on_pointer_motion(&mut ptr, Point { x: 20.0, y: 10.0 });
+        overlay.on_pointer_release(&mut ptr);
+        let buf_after_draw: Vec<u8> = overlay.buf.clone();
+
+        overlay.on_key_pressed(Keysym::period);
+        assert_eq!(pixel_at(&overlay.buf, TEST_WIDTH, 0, 0), BLACK);
+
+        let (keep, redraw) = overlay.on_key_pressed(Keysym::u);
+        assert!(keep);
+        assert!(redraw);
+        assert_eq!(overlay.buf, buf_after_draw);
+    }
+
+    #[test]
+    fn swatch_returns_some_for_fill_background_entries() {
+        for info in ALL_KEYS {
+            if let KeyAction::FillBackground(_) = info.action {
+                assert!(
+                    info.swatch().is_some(),
+                    "swatch() should return Some for FillBackground key '{}'",
+                    info.key_label,
+                );
+            }
+        }
     }
 }

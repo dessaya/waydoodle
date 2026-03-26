@@ -53,6 +53,13 @@ impl<'a> Canvas<'a> {
         Rect::new(self.width, self.height)
     }
 
+    pub fn fill(&mut self, pixel: [u8; 4]) -> Rect {
+        for chunk in self.buf.chunks_exact_mut(4) {
+            chunk.copy_from_slice(&pixel);
+        }
+        Rect::new(self.width, self.height)
+    }
+
     fn set_pixel(&mut self, x: i32, y: i32, pixel: [u8; 4]) {
         let width = self.width;
         let height = self.height;
@@ -356,6 +363,31 @@ mod tests {
 
         // Every byte must be zero.
         assert!(buf.iter().all(|&b| b == 0));
+    }
+
+    // -------------------------------------------------------
+    // Canvas::fill
+    // -------------------------------------------------------
+
+    #[test]
+    fn fill_sets_all_pixels_to_given_color_and_returns_full_rect() {
+        let mut buf = vec![0u8; 0];
+        let w = 10;
+        let h = 8;
+        let mut canvas = make_canvas(&mut buf, w, h);
+
+        let damage = canvas.fill(RED);
+        assert_eq!(damage.x, 0);
+        assert_eq!(damage.y, 0);
+        assert_eq!(damage.width, w as i32);
+        assert_eq!(damage.height, h as i32);
+
+        // Every pixel must be RED.
+        for y in 0..h {
+            for x in 0..w {
+                assert_eq!(pixel_at(&buf, w, x, y), RED);
+            }
+        }
     }
 
     // -------------------------------------------------------
