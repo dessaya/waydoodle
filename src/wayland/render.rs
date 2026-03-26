@@ -1,45 +1,15 @@
-use smithay_client_toolkit::shell::WaylandSurface;
 use smithay_client_toolkit::shm::slot::{Buffer, SlotPool};
 use wayland_client::QueueHandle;
 use wayland_client::protocol::wl_shm;
 
-use crate::canvas::Rect;
+use crate::canvas::{Canvas, Rect};
 use crate::{
-    waydoodle::{OverlayCanvas as _, OverlayHelp as _},
+    waydoodle::OverlayHelp as _,
     wayland::{App, Overlay},
 };
 
 impl Overlay {
-    /// Returns the index of the back buffer.
-    fn back_index(&self) -> usize {
-        1 - self.front
-    }
-
-    /// Swap front and back: the back buffer (which we just
-    /// attached) becomes the new front.
-    fn swap(&mut self) {
-        self.front = 1 - self.front;
-    }
-
-    /// Copy the entire back-buffer contents into the front buffer so the two
-    /// stay in sync after a swap. Call this *before* `swap()`.
-    fn sync_buffers(&mut self) {
-        // We need both canvases at the same time, but `pool.canvas` borrows
-        // mutably. Instead we use the raw pool slice and buffer offsets.
-        // SlotPool doesn't expose raw offsets, so we copy via a temp vec.
-        let back = 1 - self.front;
-        let front = self.front;
-
-        // Try to get the back canvas and copy its contents
-        if let Some(src) = self.pool.canvas(&self.buffers[back]) {
-            let data = src.to_vec();
-            if let Some(dst) = self.pool.canvas(&self.buffers[front]) {
-                dst[..data.len()].copy_from_slice(&data);
-            }
-        }
-    }
-
-    /// Create both SHM buffers, filling them with transparent black.
+    /// Create two SHM buffers, filled with transparent black.
     pub(super) fn create_buffers(pool: &mut SlotPool, width: u32, height: u32) -> [Buffer; 2] {
         let stride = width as i32 * 4;
         let (buf_a, canvas_a) = pool
@@ -65,6 +35,33 @@ impl Overlay {
         [buf_a, buf_b]
     }
 
+    /// Copy rows covered by `rect` from `canvas_buf` into `shm_canvas`.
+    /// Both slices have identical layout (width × height × 4 bytes, row-major).
+    fn copy_rect(shm_canvas: &mut [u8], canvas_buf: &[u8], width: u32, rect: &Rect) {
+        let stride = width as usize * 4;
+        let w = width as i32;
+        let h = (canvas_buf.len() / stride) as i32;
+
+        // Clamp the rect to the buffer bounds.
+        let x0 = rect.x.max(0) as usize;
+        let y0 = rect.y.max(0) as usize;
+        let x1 = (rect.x + rect.width).min(w).max(0) as usize;
+        let y1 = (rect.y + rect.height).min(h).max(0) as usize;
+
+        if x0 >= x1 || y0 >= y1 {
+            return;
+        }
+
+        let byte_start = x0 * 4;
+        let byte_end = x1 * 4;
+
+        for y in y0..y1 {
+            let row_offset = y * stride;
+            let src = &canvas_buf[row_offset + byte_start..row_offset + byte_end];
+            shm_canvas[row_offset + byte_start..row_offset + byte_end].copy_from_slice(src);
+        }
+    }
+
     pub(super) fn mark_dirty(&mut self, qh: &QueueHandle<App>, damage: Rect) {
         self.pending_damage = Some(match self.pending_damage {
             Some(existing) => existing.merge(damage),
@@ -87,29 +84,59 @@ impl Overlay {
 
         let show_help = self.show_help();
 
-        // Copy back-buffer contents into the front buffer so both stay in sync.
-        // After this, both buffers contain identical drawing data.
-        self.sync_buffers();
+        // Find a free SHM buffer. Try both; at least one should be available.
+        let buf_idx = if self.pool.canvas(&self.buffers[0]).is_some() {
+            0
+        } else if self.pool.canvas(&self.buffers[1]).is_some() {
+            1
+        } else {
+            log::debug!("flush_frame: both SHM buffers held by compositor, deferring");
+            self.pending_damage = Some(damage);
+            return;
+        };
 
-        // Composite the help panel into the back buffer (which is about to be
-        // presented to the compositor). The front buffer retains the clean
-        // drawing data, so after swap() the new back buffer (old front) is
-        // free of any transient UI — no cleanup needed when help is dismissed.
+        // The total region we must copy into this buffer: the current frame's
+        // damage plus any stale region this buffer accumulated while the other
+        // buffer was being presented.
+        let copy_rect = match self.stale[buf_idx] {
+            Some(stale) => stale.merge(damage),
+            None => damage,
+        };
+        self.stale[buf_idx] = None;
+
+        // Mark the *other* buffer as stale in the region we're about to present.
+        let other = 1 - buf_idx;
+        self.stale[other] = Some(match self.stale[other] {
+            Some(existing) => existing.merge(damage),
+            None => damage,
+        });
+
+        // Copy only the affected rows from the off-screen canvas into the SHM
+        // buffer.
+        let shm_canvas = self
+            .pool
+            .canvas(&self.buffers[buf_idx])
+            .expect("buffer availability was just checked");
+        Self::copy_rect(shm_canvas, &self.canvas_buf, self.width, &copy_rect);
+
+        // Composite the help panel directly into the SHM buffer (transient UI
+        // that should not persist in the off-screen canvas).
         if show_help {
-            if let Some(mut canvas) = self.back_canvas() {
-                crate::help::render_help(&mut canvas);
-            }
+            let len = self.canvas_buf.len();
+            let mut canvas = Canvas {
+                buf: &mut shm_canvas[..len],
+                width: self.width,
+                height: self.height,
+            };
+            crate::help::render_help(&mut canvas);
         }
 
-        let back = self.back_index();
         let surface = self.window.wl_surface();
         surface.damage_buffer(damage.x, damage.y, damage.width, damage.height);
-        self.buffers[back]
+        self.buffers[buf_idx]
             .attach_to(surface)
             .expect("Failed to attach buffer");
         self.window.commit();
-
-        self.swap();
     }
 
     pub(super) fn on_frame_callback(&mut self, qh: &QueueHandle<App>) {

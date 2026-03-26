@@ -1,6 +1,8 @@
 use smithay_client_toolkit::{
+    compositor::Region,
     shell::{
         WaylandSurface,
+        wlr_layer::{Anchor, KeyboardInteractivity, Layer, LayerSurface},
         xdg::window::{Window, WindowDecorations},
     },
     shm::{
@@ -8,6 +10,7 @@ use smithay_client_toolkit::{
         slot::{Buffer, SlotPool},
     },
 };
+use wayland_client::protocol::wl_surface::WlSurface;
 
 use crate::{
     canvas::{Canvas, Rect},
@@ -15,19 +18,47 @@ use crate::{
     wayland::{App, OverlayState},
 };
 
+pub enum WaylandWindow {
+    XdgWindow(Window),
+    LayerSurface(LayerSurface),
+}
+
+impl WaylandWindow {
+    pub(crate) fn wl_surface(&self) -> &WlSurface {
+        match self {
+            WaylandWindow::XdgWindow(w) => w.wl_surface(),
+            WaylandWindow::LayerSurface(l) => l.wl_surface(),
+        }
+    }
+
+    pub(crate) fn commit(&self) {
+        match self {
+            WaylandWindow::XdgWindow(w) => w.commit(),
+            WaylandWindow::LayerSurface(l) => l.commit(),
+        }
+    }
+}
+
 pub(super) struct Overlay {
-    pub window: Window,
+    pub window: WaylandWindow,
     pub width: u32,
     pub height: u32,
 
-    // double buffering: we create two SHM buffers and alternate between them.
-    // The compositor always holds a reference to the "front" buffer, while we
-    // draw into the "back" buffer. When we want to update the display, we
-    // attach the back buffer and then swap them.
+    /// Off-screen pixel buffer that the model draws into. This is always
+    /// writable regardless of compositor buffer state.
+    pub canvas_buf: Vec<u8>,
+
+    /// SHM pool and two presentation buffers. At frame time we pick whichever
+    /// buffer the compositor has released, copy the dirty region from the
+    /// off-screen canvas into it, attach, and commit.
     pub pool: SlotPool,
     pub buffers: [Buffer; 2],
-    /// Index of the buffer currently attached to (owned by) the compositor.
-    pub front: usize,
+
+    /// Per-buffer tracking of regions that are out of date compared to
+    /// `canvas_buf`. When we present using one buffer, the *other* buffer
+    /// accumulates the damage as stale. Next time we use that buffer we
+    /// must copy its stale region in addition to the current frame's damage.
+    pub stale: [Option<Rect>; 2],
 
     pub pending_damage: Option<Rect>,
     pub frame_requested: bool,
@@ -66,33 +97,55 @@ impl waydoodle::App<Overlay> for App {
             self.overlay.is_none(),
             "create_overlay called while overlay already exists"
         );
-        let surface = self
+
+        let wl_surface = self
             .wayland
             .compositor_state
             .create_surface(&self.queue_handle);
-        let window = self.wayland.xdg_shell.create_window(
-            surface,
-            WindowDecorations::None,
-            &self.queue_handle,
-        );
-        window.set_title("Waydoodle");
-        window.set_app_id("io.github.dessaya.waydoodle");
-        window.set_maximized();
-        window.commit();
-        log::debug!("Created overlay widow -- waiting for configure event to create buffers");
-        self.overlay = Some(OverlayState::Pending(window));
+
+        // Set an empty opaque region so the compositor knows our surface is
+        // fully transparent and must composite windows behind it correctly.
+        if let Ok(empty_region) = Region::new(&self.wayland.compositor_state) {
+            wl_surface.set_opaque_region(Some(empty_region.wl_region()));
+        }
+
+        const WINDOW_ID: &str = "waydoodle";
+        let xdg_window_or_layer_surface = match &self.wayland.layer_shell {
+            Some(layer_shell) => {
+                let layer_surface = layer_shell.create_layer_surface(
+                    &self.queue_handle,
+                    wl_surface,
+                    Layer::Overlay,
+                    Some(WINDOW_ID),
+                    None,
+                );
+                layer_surface.set_anchor(Anchor::all());
+                layer_surface.set_keyboard_interactivity(KeyboardInteractivity::OnDemand);
+                layer_surface.set_size(0, 0); // Use full screen size
+                layer_surface.set_exclusive_zone(-1);
+                layer_surface.commit();
+                WaylandWindow::LayerSurface(layer_surface)
+            }
+            None => {
+                let window = self.wayland.xdg_shell.create_window(
+                    wl_surface,
+                    WindowDecorations::None,
+                    &self.queue_handle,
+                );
+                window.set_title("Waydoodle");
+                window.set_app_id(WINDOW_ID);
+                window.set_maximized();
+                window.commit();
+                log::debug!(
+                    "Created overlay widow -- waiting for configure event to create buffers"
+                );
+                WaylandWindow::XdgWindow(window)
+            }
+        };
+        self.overlay = Some(OverlayState::Pending(xdg_window_or_layer_surface));
     }
 
     fn destroy_overlay(&mut self) {
-        if let Some(overlay) = self.overlay.take() {
-            let window = match overlay {
-                OverlayState::Pending(window) => window,
-                OverlayState::Ready(overlay) => overlay.window,
-            };
-            let surface = window.wl_surface().clone();
-            drop(window);
-            surface.destroy();
-        }
         self.overlay = None;
     }
 
@@ -106,19 +159,14 @@ impl waydoodle::App<Overlay> for App {
 }
 
 impl waydoodle::OverlayCanvas for Overlay {
-    /// Returns a mutable reference to the back buffer's canvas (the one NOT
-    /// held by the compositor). Returns `None` only if the pool is in a bad
-    /// state.
-    fn back_canvas(&mut self) -> Option<Canvas<'_>> {
-        let back = 1 - self.front;
-        if let Some(buf) = self.pool.canvas(&self.buffers[back]) {
-            return Some(Canvas {
-                buf,
-                width: self.width,
-                height: self.height,
-            });
-        }
-        None
+    /// Returns a mutable reference to the off-screen canvas. This is always
+    /// available because the off-screen buffer is never held by the compositor.
+    fn canvas(&mut self) -> Option<Canvas<'_>> {
+        Some(Canvas {
+            buf: &mut self.canvas_buf,
+            width: self.width,
+            height: self.height,
+        })
     }
 }
 

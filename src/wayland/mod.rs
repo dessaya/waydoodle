@@ -17,14 +17,18 @@ use smithay_client_toolkit::{
     output::OutputState,
     registry::RegistryState,
     seat::SeatState,
-    shell::xdg::{XdgShell, window::Window},
+    shell::{wlr_layer::LayerShell, xdg::XdgShell},
     shm::Shm,
 };
 use tablet::TabletState;
 use wayland_client::protocol::{wl_keyboard, wl_pointer, wl_seat};
 use wayland_protocols::wp::tablet::zv2::client::zwp_tablet_manager_v2;
 
-use crate::{tray::WaydoodleTray, waydoodle, wayland::overlay::Overlay};
+use crate::{
+    tray::WaydoodleTray,
+    waydoodle,
+    wayland::overlay::{Overlay, WaylandWindow},
+};
 
 struct KeyboardState {
     pub seat: wl_seat::WlSeat,
@@ -44,6 +48,7 @@ struct WaylandState {
     pub output_state: OutputState,
     pub compositor_state: CompositorState,
     pub xdg_shell: XdgShell,
+    pub layer_shell: Option<LayerShell>,
     pub shm: Shm,
 }
 
@@ -52,13 +57,14 @@ struct WaylandState {
 /// the configure event with the initial size before we create the SHM buffers.
 /// Once we receive the configure event, we create the buffers and transition to
 /// the Ready state.
+#[allow(clippy::large_enum_variant)]
 enum OverlayState {
-    Pending(Window),
+    Pending(WaylandWindow),
     Ready(Overlay),
 }
 
 impl OverlayState {
-    fn window(&self) -> &Window {
+    fn window(&self) -> &WaylandWindow {
         match self {
             OverlayState::Pending(w) => w,
             OverlayState::Ready(o) => &o.window,

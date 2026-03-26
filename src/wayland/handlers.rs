@@ -1,7 +1,7 @@
 use smithay_client_toolkit::{
     compositor::CompositorHandler,
-    delegate_compositor, delegate_keyboard, delegate_output, delegate_pointer, delegate_registry,
-    delegate_seat, delegate_shm, delegate_xdg_shell, delegate_xdg_window,
+    delegate_compositor, delegate_keyboard, delegate_layer, delegate_output, delegate_pointer,
+    delegate_registry, delegate_seat, delegate_shm, delegate_xdg_shell, delegate_xdg_window,
     output::{OutputHandler, OutputState},
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
@@ -11,13 +11,13 @@ use smithay_client_toolkit::{
         pointer::{BTN_LEFT, PointerEvent, PointerEventKind, PointerHandler},
     },
     shell::{
-        WaylandSurface,
+        wlr_layer::{LayerShellHandler, LayerSurface, LayerSurfaceConfigure},
         xdg::window::{Window, WindowConfigure, WindowHandler},
     },
     shm::{Shm, ShmHandler},
 };
 use wayland_client::{
-    Connection, QueueHandle,
+    Connection, Proxy, QueueHandle,
     protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_surface},
 };
 
@@ -55,9 +55,8 @@ impl CompositorHandler for App {
         _surface: &wl_surface::WlSurface,
         _time: u32,
     ) {
-        match self.overlay.as_mut() {
-            Some(OverlayState::Ready(o)) => o.on_frame_callback(qh),
-            _ => return,
+        if let Some(OverlayState::Ready(o)) = self.overlay.as_mut() {
+            o.on_frame_callback(qh)
         }
     }
 
@@ -110,41 +109,30 @@ impl OutputHandler for App {
     }
 }
 
-impl WindowHandler for App {
-    fn request_close(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _window: &Window) {}
-
-    fn configure(
-        &mut self,
-        _conn: &Connection,
-        qh: &QueueHandle<Self>,
-        _window: &Window,
-        configure: WindowConfigure,
-        _serial: u32,
-    ) {
+impl App {
+    fn configure(&mut self, width: u32, height: u32, qh: &QueueHandle<Self>) {
         log::debug!(
-            "Received configure event for overlay window: {:?}",
-            configure
+            "Received configure event for overlay window: {}x{}",
+            width,
+            height,
         );
-        let (Some(w), Some(h)) = configure.new_size else {
-            return;
-        };
-        let (width, height) = (w.get(), h.get());
-
         match &mut self.overlay {
             Some(OverlayState::Pending(_)) => {
                 // Transition Pending → Ready: take the Window out and build the full Overlay.
                 let Some(OverlayState::Pending(window)) = self.overlay.take() else {
                     unreachable!();
                 };
+                let canvas_buf = vec![0u8; width as usize * height as usize * 4];
                 let (pool, buffers) =
                     Self::create_overlay_pool_and_buffers(&self.wayland.shm, width, height);
                 let mut overlay = Overlay {
                     window,
-                    pool,
-                    buffers,
-                    front: 0,
                     width,
                     height,
+                    canvas_buf,
+                    pool,
+                    buffers,
+                    stale: [None, None],
                     pending_damage: None,
                     frame_requested: false,
                     tool: DEFAULT_TOOL,
@@ -161,11 +149,13 @@ impl WindowHandler for App {
                         width,
                         height
                     );
+                    let canvas_buf = vec![0u8; width as usize * height as usize * 4];
                     let (pool, buffers) =
                         Self::create_overlay_pool_and_buffers(&self.wayland.shm, width, height);
+                    overlay.canvas_buf = canvas_buf;
                     overlay.pool = pool;
                     overlay.buffers = buffers;
-                    overlay.front = 0;
+                    overlay.stale = [None, None];
                     overlay.width = width;
                     overlay.height = height;
                     if let Some(damage) = overlay.on_size_changed() {
@@ -175,6 +165,25 @@ impl WindowHandler for App {
             }
             None => {}
         }
+    }
+}
+
+impl WindowHandler for App {
+    fn request_close(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _window: &Window) {}
+
+    fn configure(
+        &mut self,
+        _conn: &Connection,
+        qh: &QueueHandle<Self>,
+        _window: &Window,
+        configure: WindowConfigure,
+        _serial: u32,
+    ) {
+        let (Some(w), Some(h)) = configure.new_size else {
+            return;
+        };
+        let (width, height) = (w.get(), h.get());
+        self.configure(width, height, qh);
     }
 }
 
@@ -225,24 +234,20 @@ impl SeatHandler for App {
             });
         }
 
-        if let Some(ref manager) = self.tablet_manager {
-            if !self.tablets.iter().any(|t| t.wl_seat == seat) {
-                let tablet_seat = manager.get_tablet_seat(&seat, qh, ());
-                let cursor = TabletCursorState::new(
-                    conn,
-                    &self.wayland.compositor_state,
-                    &self.wayland.shm,
-                    qh,
-                );
-                self.tablets.push(TabletState {
-                    wl_seat: seat.clone(),
-                    _seat: tablet_seat,
-                    cursor,
-                    active_tool: None,
-                    model: waydoodle::PointerState::new(),
-                });
-                log::info!("Tablet seat created for seat");
-            }
+        if let Some(ref manager) = self.tablet_manager
+            && !self.tablets.iter().any(|t| t.wl_seat == seat)
+        {
+            let tablet_seat = manager.get_tablet_seat(&seat, qh, ());
+            let cursor =
+                TabletCursorState::new(conn, &self.wayland.compositor_state, &self.wayland.shm, qh);
+            self.tablets.push(TabletState {
+                wl_seat: seat.clone(),
+                _seat: tablet_seat,
+                cursor,
+                active_tool: None,
+                model: waydoodle::PointerState::new(),
+            });
+            log::info!("Tablet seat created for seat");
         }
     }
 
@@ -383,13 +388,13 @@ impl PointerHandler for App {
         pointer: &wl_pointer::WlPointer,
         events: &[PointerEvent],
     ) {
-        let window_surface = match self.overlay.as_ref() {
-            Some(s) => s.window().wl_surface().clone(),
+        let window_surface_id = match self.overlay.as_ref() {
+            Some(s) => s.window().wl_surface().id(),
             None => return,
         };
 
         for event in events {
-            if event.surface != window_surface {
+            if event.surface.id() != window_surface_id {
                 continue;
             }
 
@@ -473,6 +478,22 @@ impl ShmHandler for App {
     }
 }
 
+impl LayerShellHandler for App {
+    fn configure(
+        &mut self,
+        _conn: &Connection,
+        qh: &QueueHandle<Self>,
+        _layer: &LayerSurface,
+        configure: LayerSurfaceConfigure,
+        _serial: u32,
+    ) {
+        let (width, height) = configure.new_size;
+        self.configure(width, height, qh);
+    }
+
+    fn closed(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>, _layer: &LayerSurface) {}
+}
+
 delegate_compositor!(App);
 delegate_output!(App);
 delegate_shm!(App);
@@ -482,6 +503,7 @@ delegate_pointer!(App);
 delegate_xdg_shell!(App);
 delegate_xdg_window!(App);
 delegate_registry!(App);
+delegate_layer!(App);
 
 impl ProvidesRegistryState for App {
     fn registry(&mut self) -> &mut RegistryState {

@@ -124,12 +124,11 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for App {
                 else {
                     return;
                 };
-                if let Some(OverlayState::Ready(overlay)) = state.overlay.as_mut() {
-                    if let Some(damage) =
+                if let Some(OverlayState::Ready(overlay)) = state.overlay.as_mut()
+                    && let Some(damage) =
                         overlay.on_pointer_motion(&mut tablet.model, Point { x, y })
-                    {
-                        overlay.mark_dirty(qh, damage);
-                    }
+                {
+                    overlay.mark_dirty(qh, damage);
                 }
             }
             zwp_tablet_tool_v2::Event::Pressure { .. } => {}

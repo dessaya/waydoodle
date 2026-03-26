@@ -188,7 +188,7 @@ pub(crate) enum HistoryItem {
 }
 
 pub(crate) trait OverlayCanvas {
-    fn back_canvas(&mut self) -> Option<Canvas<'_>>;
+    fn canvas(&mut self) -> Option<Canvas<'_>>;
 }
 
 pub(crate) trait OverlayTool {
@@ -257,14 +257,14 @@ pub(crate) trait Overlay:
             }
             KeyAction::Clear => {
                 self.push_history(HistoryItem::Clear);
-                if let Some(mut canvas) = self.back_canvas() {
+                if let Some(mut canvas) = self.canvas() {
                     canvas.clear();
                 }
                 (true, true)
             }
             KeyAction::FillBackground(color) => {
                 self.push_history(HistoryItem::FillBackground(color));
-                if let Some(mut canvas) = self.back_canvas() {
+                if let Some(mut canvas) = self.canvas() {
                     canvas.fill(color);
                 }
                 (true, true)
@@ -272,7 +272,7 @@ pub(crate) trait Overlay:
             KeyAction::Undo => {
                 if self.pop_history().is_some() {
                     let history: Vec<HistoryItem> = self.history().to_vec();
-                    if let Some(mut canvas) = self.back_canvas() {
+                    if let Some(mut canvas) = self.canvas() {
                         replay_history(&mut canvas, &history);
                     }
                     (true, true)
@@ -302,7 +302,7 @@ pub(crate) trait Overlay:
         let tool = self.current_tool();
         let radius = tool.brush_radius();
         let pixel = tool.pixel_color();
-        self.back_canvas()
+        self.canvas()
             .map(|mut c| c.draw_circle(pos, radius, pixel))
             .unwrap_or(ZERO_RECT)
     }
@@ -318,14 +318,12 @@ pub(crate) trait Overlay:
     fn on_pointer_motion(&mut self, pointer: &mut PointerState, pos: Point) -> Option<Rect> {
         let prev = pointer.pos;
         pointer.pos = pos;
-        let Some(points) = pointer.current_stroke.as_mut() else {
-            return None;
-        };
+        let points = pointer.current_stroke.as_mut()?;
         points.push(pos);
         let radius = self.current_tool().brush_radius();
         let pixel = self.current_tool().pixel_color();
         Some(
-            self.back_canvas()
+            self.canvas()
                 .map(|mut c| c.draw_line(prev, pos, radius, pixel))
                 .unwrap_or(ZERO_RECT),
         )
@@ -333,9 +331,7 @@ pub(crate) trait Overlay:
 
     fn on_size_changed(&mut self) -> Option<Rect> {
         while self.pop_history().is_some() {}
-        let Some(mut canvas) = self.back_canvas() else {
-            return None;
-        };
+        let mut canvas = self.canvas()?;
         Some(canvas.clear())
     }
 }
@@ -392,7 +388,7 @@ mod tests {
     }
 
     impl OverlayCanvas for MockOverlay {
-        fn back_canvas(&mut self) -> Option<Canvas<'_>> {
+        fn canvas(&mut self) -> Option<Canvas<'_>> {
             Some(Canvas {
                 buf: &mut self.buf,
                 width: self.width,
@@ -525,11 +521,8 @@ mod tests {
     #[test]
     fn swatch_returns_some_for_pen_entries() {
         for info in ALL_KEYS {
-            match info.action {
-                KeyAction::SetTool(Tool::Pen(color)) => {
-                    assert_eq!(info.swatch(), Some(u32::from_le_bytes(color)));
-                }
-                _ => {}
+            if let KeyAction::SetTool(Tool::Pen(color)) = info.action {
+                assert_eq!(info.swatch(), Some(u32::from_le_bytes(color)));
             }
         }
     }

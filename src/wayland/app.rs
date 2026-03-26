@@ -3,9 +3,14 @@ use calloop::{
     signals::{Signal, Signals},
 };
 use smithay_client_toolkit::{
-    compositor::CompositorState, output::OutputState, reexports::calloop::EventLoop,
-    reexports::calloop_wayland_source::WaylandSource, registry::RegistryState, seat::SeatState,
-    shell::xdg::XdgShell, shm::Shm,
+    compositor::CompositorState,
+    output::OutputState,
+    reexports::calloop::EventLoop,
+    reexports::calloop_wayland_source::WaylandSource,
+    registry::RegistryState,
+    seat::SeatState,
+    shell::{wlr_layer::LayerShell, xdg::XdgShell},
+    shm::Shm,
 };
 use wayland_client::{Connection, globals::registry_queue_init};
 use wayland_protocols::wp::tablet::zv2::client::zwp_tablet_manager_v2;
@@ -40,6 +45,13 @@ impl App {
             CompositorState::bind(&globals, &qh).expect("wl_compositor not available");
         let xdg_shell = XdgShell::bind(&globals, &qh).expect("xdg_wm_base not available");
         let shm = Shm::bind(&globals, &qh).expect("wl_shm not available");
+        let layer_shell = match LayerShell::bind(&globals, &qh) {
+            Ok(layer_shell) => Some(layer_shell),
+            Err(err) => {
+                log::warn!("Layer shell not available: {err}");
+                None
+            }
+        };
 
         let tablet_manager = globals
             .bind::<zwp_tablet_manager_v2::ZwpTabletManagerV2, _, _>(&qh, 1..=1, ())
@@ -75,6 +87,7 @@ impl App {
                 output_state: OutputState::new(&globals, &qh),
                 compositor_state,
                 xdg_shell,
+                layer_shell,
                 shm,
             },
             keyboards: Vec::new(),
