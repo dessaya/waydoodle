@@ -4,14 +4,14 @@ use crate::canvas::{Canvas, Point, Rect};
 
 pub(crate) struct PointerState {
     pub pos: Point,
-    pub pressed: bool,
+    pub current_stroke: Option<Vec<Point>>,
 }
 
 impl PointerState {
     pub(crate) fn new() -> Self {
         Self {
             pos: Point { x: 0.0, y: 0.0 },
-            pressed: false,
+            current_stroke: None,
         }
     }
 }
@@ -181,7 +181,7 @@ pub(crate) struct Stroke {
 }
 
 #[derive(Clone)]
-pub(crate) enum StrokeItem {
+pub(crate) enum HistoryItem {
     Stroke(Stroke),
     Clear,
     FillBackground([u8; 4]),
@@ -205,11 +205,10 @@ pub(crate) trait OverlayHelp {
     }
 }
 
-pub(crate) trait OverlayStrokes {
-    fn strokes(&self) -> &[StrokeItem];
-    fn push_stroke(&mut self, item: StrokeItem);
-    fn pop_stroke(&mut self) -> Option<StrokeItem>;
-    fn current_points(&mut self) -> &mut Vec<Point>;
+pub(crate) trait OverlayHistory {
+    fn history(&self) -> &[HistoryItem];
+    fn push_history(&mut self, item: HistoryItem);
+    fn pop_history(&mut self) -> Option<HistoryItem>;
 }
 
 const ZERO_RECT: Rect = Rect {
@@ -219,11 +218,11 @@ const ZERO_RECT: Rect = Rect {
     height: 0,
 };
 
-fn replay_strokes(canvas: &mut Canvas, strokes: &[StrokeItem]) {
+fn replay_history(canvas: &mut Canvas, history: &[HistoryItem]) {
     canvas.clear();
-    for item in strokes {
+    for item in history {
         match item {
-            StrokeItem::Stroke(stroke) => {
+            HistoryItem::Stroke(stroke) => {
                 let radius = stroke.tool.brush_radius();
                 let pixel = stroke.tool.pixel_color();
                 if let Some(first) = stroke.points.first() {
@@ -233,10 +232,10 @@ fn replay_strokes(canvas: &mut Canvas, strokes: &[StrokeItem]) {
                     }
                 }
             }
-            StrokeItem::Clear => {
+            HistoryItem::Clear => {
                 canvas.clear();
             }
-            StrokeItem::FillBackground(color) => {
+            HistoryItem::FillBackground(color) => {
                 canvas.fill(*color);
             }
         }
@@ -244,7 +243,7 @@ fn replay_strokes(canvas: &mut Canvas, strokes: &[StrokeItem]) {
 }
 
 pub(crate) trait Overlay:
-    OverlayCanvas + OverlayTool + OverlayHelp + OverlayStrokes
+    OverlayCanvas + OverlayTool + OverlayHelp + OverlayHistory
 {
     // Returns (keep_open, redraw)
     fn on_key_pressed(&mut self, keysym: Keysym) -> (bool, bool) {
@@ -257,24 +256,24 @@ pub(crate) trait Overlay:
                 (true, false)
             }
             KeyAction::Clear => {
-                self.push_stroke(StrokeItem::Clear);
+                self.push_history(HistoryItem::Clear);
                 if let Some(mut canvas) = self.back_canvas() {
                     canvas.clear();
                 }
                 (true, true)
             }
             KeyAction::FillBackground(color) => {
-                self.push_stroke(StrokeItem::FillBackground(color));
+                self.push_history(HistoryItem::FillBackground(color));
                 if let Some(mut canvas) = self.back_canvas() {
                     canvas.fill(color);
                 }
                 (true, true)
             }
             KeyAction::Undo => {
-                if self.pop_stroke().is_some() {
-                    let strokes: Vec<StrokeItem> = self.strokes().to_vec();
+                if self.pop_history().is_some() {
+                    let history: Vec<HistoryItem> = self.history().to_vec();
                     if let Some(mut canvas) = self.back_canvas() {
-                        replay_strokes(&mut canvas, &strokes);
+                        replay_history(&mut canvas, &history);
                     }
                     (true, true)
                 } else {
@@ -294,15 +293,12 @@ pub(crate) trait Overlay:
     }
 
     fn on_pointer_leave(&mut self, pointer: &mut PointerState) {
-        pointer.pressed = false;
+        pointer.current_stroke = None;
     }
 
     fn on_pointer_press(&mut self, pointer: &mut PointerState, pos: Point) -> Rect {
-        pointer.pressed = true;
         pointer.pos = pos;
-        let points = self.current_points();
-        points.clear();
-        points.push(pos);
+        pointer.current_stroke = Some(vec![pos]);
         let tool = self.current_tool();
         let radius = tool.brush_radius();
         let pixel = tool.pixel_color();
@@ -312,49 +308,43 @@ pub(crate) trait Overlay:
     }
 
     fn on_pointer_release(&mut self, pointer: &mut PointerState) {
-        pointer.pressed = false;
         let tool = self.current_tool();
-        let points = std::mem::take(self.current_points());
-        if !points.is_empty() {
+        if let Some(points) = pointer.current_stroke.take() {
             let stroke = Stroke { tool, points };
-            self.push_stroke(StrokeItem::Stroke(stroke));
+            self.push_history(HistoryItem::Stroke(stroke));
         }
     }
 
     fn on_pointer_motion(&mut self, pointer: &mut PointerState, pos: Point) -> Option<Rect> {
         let prev = pointer.pos;
-        let pressed = pointer.pressed;
         pointer.pos = pos;
-        if pressed {
-            self.current_points().push(pos);
-            let radius = self.current_tool().brush_radius();
-            let pixel = self.current_tool().pixel_color();
-            Some(
-                self.back_canvas()
-                    .map(|mut c| c.draw_line(prev, pos, radius, pixel))
-                    .unwrap_or(ZERO_RECT),
-            )
-        } else {
-            None
-        }
+        let Some(points) = pointer.current_stroke.as_mut() else {
+            return None;
+        };
+        points.push(pos);
+        let radius = self.current_tool().brush_radius();
+        let pixel = self.current_tool().pixel_color();
+        Some(
+            self.back_canvas()
+                .map(|mut c| c.draw_line(prev, pos, radius, pixel))
+                .unwrap_or(ZERO_RECT),
+        )
     }
 
     fn on_size_changed(&mut self) -> Option<Rect> {
-        self.current_points().clear();
-        while self.pop_stroke().is_some() {}
-        if let Some(mut canvas) = self.back_canvas() {
-            Some(canvas.clear())
-        } else {
-            None
-        }
+        while self.pop_history().is_some() {}
+        let Some(mut canvas) = self.back_canvas() else {
+            return None;
+        };
+        Some(canvas.clear())
     }
 }
 
-impl<T: OverlayCanvas + OverlayTool + OverlayHelp + OverlayStrokes> Overlay for T {}
+impl<T: OverlayCanvas + OverlayTool + OverlayHelp + OverlayHistory> Overlay for T {}
 
 pub(crate) trait App<O>
 where
-    O: OverlayCanvas + OverlayTool + OverlayHelp + OverlayStrokes,
+    O: OverlayCanvas + OverlayTool + OverlayHelp + OverlayHistory,
 {
     fn create_overlay(&mut self);
     fn destroy_overlay(&mut self);
@@ -385,8 +375,7 @@ mod tests {
         height: u32,
         tool: Tool,
         help: bool,
-        strokes: Vec<StrokeItem>,
-        current_points: Vec<Point>,
+        history: Vec<HistoryItem>,
     }
 
     impl MockOverlay {
@@ -397,8 +386,7 @@ mod tests {
                 height,
                 tool: DEFAULT_TOOL,
                 help: false,
-                strokes: Vec::new(),
-                current_points: Vec::new(),
+                history: Vec::new(),
             }
         }
     }
@@ -433,21 +421,17 @@ mod tests {
         }
     }
 
-    impl OverlayStrokes for MockOverlay {
-        fn strokes(&self) -> &[StrokeItem] {
-            &self.strokes
+    impl OverlayHistory for MockOverlay {
+        fn history(&self) -> &[HistoryItem] {
+            &self.history
         }
 
-        fn push_stroke(&mut self, item: StrokeItem) {
-            self.strokes.push(item);
+        fn push_history(&mut self, item: HistoryItem) {
+            self.history.push(item);
         }
 
-        fn pop_stroke(&mut self) -> Option<StrokeItem> {
-            self.strokes.pop()
-        }
-
-        fn current_points(&mut self) -> &mut Vec<Point> {
-            &mut self.current_points
+        fn pop_history(&mut self) -> Option<HistoryItem> {
+            self.history.pop()
         }
     }
 
@@ -748,23 +732,23 @@ mod tests {
     }
 
     #[test]
-    fn on_pointer_leave_resets_pressed() {
+    fn on_pointer_leave_clears_current_stroke() {
         let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
         let mut ptr = PointerState::new();
         overlay.on_pointer_press(&mut ptr, Point { x: 10.0, y: 10.0 });
-        assert!(ptr.pressed);
+        assert!(ptr.current_stroke.is_some());
         overlay.on_pointer_leave(&mut ptr);
-        assert!(!ptr.pressed);
+        assert!(ptr.current_stroke.is_none());
     }
 
     #[test]
-    fn on_pointer_release_resets_pressed() {
+    fn on_pointer_release_clears_current_stroke() {
         let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
         let mut ptr = PointerState::new();
         overlay.on_pointer_press(&mut ptr, Point { x: 10.0, y: 10.0 });
-        assert!(ptr.pressed);
+        assert!(ptr.current_stroke.is_some());
         overlay.on_pointer_release(&mut ptr);
-        assert!(!ptr.pressed);
+        assert!(ptr.current_stroke.is_none());
     }
 
     #[test]
@@ -848,12 +832,12 @@ mod tests {
         overlay.on_pointer_motion(&mut ptr, Point { x: 20.0, y: 10.0 });
         overlay.on_pointer_release(&mut ptr);
 
-        assert_eq!(overlay.strokes.len(), 1);
+        assert_eq!(overlay.history.len(), 1);
 
         let (keep, redraw) = overlay.on_key_pressed(Keysym::u);
         assert!(keep);
         assert!(redraw);
-        assert!(overlay.strokes.is_empty());
+        assert!(overlay.history.is_empty());
         assert!(overlay.buf.iter().all(|&b| b == 0));
     }
 
@@ -906,32 +890,36 @@ mod tests {
         overlay.on_pointer_motion(&mut ptr, Point { x: 20.0, y: 50.0 });
         overlay.on_pointer_release(&mut ptr);
 
-        assert_eq!(overlay.strokes.len(), 2);
+        assert_eq!(overlay.history.len(), 2);
 
         overlay.on_key_pressed(Keysym::u);
-        assert_eq!(overlay.strokes.len(), 1);
+        assert_eq!(overlay.history.len(), 1);
         assert_eq!(overlay.buf, buf_after_first);
 
         overlay.on_key_pressed(Keysym::u);
-        assert!(overlay.strokes.is_empty());
+        assert!(overlay.history.is_empty());
         assert!(overlay.buf.iter().all(|&b| b == 0));
     }
 
     #[test]
-    fn on_pointer_press_starts_current_points() {
+    fn on_pointer_press_starts_current_stroke() {
         let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
         overlay.tool = Tool::Pen(GREEN);
         let mut ptr = PointerState::new();
 
         overlay.on_pointer_press(&mut ptr, Point { x: 15.0, y: 25.0 });
 
-        assert_eq!(overlay.current_points.len(), 1);
-        assert_eq!(overlay.current_points[0].x, 15.0);
-        assert_eq!(overlay.current_points[0].y, 25.0);
+        let points = ptr
+            .current_stroke
+            .as_ref()
+            .expect("stroke should be in progress");
+        assert_eq!(points.len(), 1);
+        assert_eq!(points[0].x, 15.0);
+        assert_eq!(points[0].y, 25.0);
     }
 
     #[test]
-    fn on_pointer_motion_appends_to_current_points() {
+    fn on_pointer_motion_appends_to_current_stroke() {
         let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
         overlay.tool = Tool::Pen(RED);
         let mut ptr = PointerState::new();
@@ -939,9 +927,13 @@ mod tests {
         overlay.on_pointer_press(&mut ptr, Point { x: 5.0, y: 5.0 });
         overlay.on_pointer_motion(&mut ptr, Point { x: 15.0, y: 15.0 });
 
-        assert_eq!(overlay.current_points.len(), 2);
-        assert_eq!(overlay.current_points[1].x, 15.0);
-        assert_eq!(overlay.current_points[1].y, 15.0);
+        let points = ptr
+            .current_stroke
+            .as_ref()
+            .expect("stroke should be in progress");
+        assert_eq!(points.len(), 2);
+        assert_eq!(points[1].x, 15.0);
+        assert_eq!(points[1].y, 15.0);
     }
 
     #[test]
@@ -954,12 +946,12 @@ mod tests {
         overlay.on_pointer_motion(&mut ptr, Point { x: 15.0, y: 15.0 });
         overlay.on_pointer_release(&mut ptr);
 
-        assert!(overlay.current_points.is_empty());
-        assert_eq!(overlay.strokes.len(), 1);
+        assert!(ptr.current_stroke.is_none());
+        assert_eq!(overlay.history.len(), 1);
     }
 
     #[test]
-    fn on_size_changed_clears_strokes() {
+    fn on_size_changed_clears_history() {
         let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
         overlay.tool = Tool::Pen(RED);
         let mut ptr = PointerState::new();
@@ -968,12 +960,11 @@ mod tests {
         overlay.on_pointer_motion(&mut ptr, Point { x: 20.0, y: 10.0 });
         overlay.on_pointer_release(&mut ptr);
 
-        assert_eq!(overlay.strokes.len(), 1);
+        assert_eq!(overlay.history.len(), 1);
 
         overlay.on_size_changed();
 
-        assert!(overlay.strokes.is_empty());
-        assert!(overlay.current_points.is_empty());
+        assert!(overlay.history.is_empty());
     }
 
     #[test]
@@ -983,7 +974,7 @@ mod tests {
         let (keep, redraw) = overlay.on_key_pressed(Keysym::period);
         assert!(keep);
         assert!(redraw);
-        assert_eq!(overlay.strokes.len(), 1);
+        assert_eq!(overlay.history.len(), 1);
         assert_eq!(pixel_at(&overlay.buf, TEST_WIDTH, 0, 0), BLACK);
         assert_eq!(pixel_at(&overlay.buf, TEST_WIDTH, 50, 40), BLACK);
     }
@@ -995,7 +986,7 @@ mod tests {
         let (keep, redraw) = overlay.on_key_pressed(Keysym::comma);
         assert!(keep);
         assert!(redraw);
-        assert_eq!(overlay.strokes.len(), 1);
+        assert_eq!(overlay.history.len(), 1);
         assert_eq!(pixel_at(&overlay.buf, TEST_WIDTH, 0, 0), WHITE);
         assert_eq!(pixel_at(&overlay.buf, TEST_WIDTH, 50, 40), WHITE);
     }

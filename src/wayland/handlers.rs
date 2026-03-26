@@ -149,8 +149,7 @@ impl WindowHandler for App {
                     frame_requested: false,
                     tool: DEFAULT_TOOL,
                     help: false,
-                    strokes: Vec::new(),
-                    current_points: Vec::new(),
+                    history: Vec::new(),
                 };
                 overlay.mark_dirty(qh, Rect::new(width, height));
                 self.overlay = Some(OverlayState::Ready(overlay));
