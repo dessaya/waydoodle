@@ -45,14 +45,25 @@ Launch Waydoodle from your application menu or from a terminal:
 waydoodle
 ```
 
-A tray icon will appear. Send `SIGUSR1` to toggle the annotation overlay
-on and off:
+A tray icon will appear. Use its menu, or send `SIGUSR1` to toggle the
+annotation overlay on and off:
 
 ```
 pkill -SIGUSR1 waydoodle
 ```
 
-While the overlay is visible:
+If the XDG Layer Shell protocol is supported by your compositor, the overlay
+will be displayed on top of all windows and will not receive input events when
+inactive.
+
+Hit <kbd>Esc</kbd> or send `SIGUSR2` to close the overlay (destroying the
+current drawing):
+
+```
+pkill -SIGUSR2 waydoodle
+```
+
+While the overlay is focused:
 
 | Key | Action |
 |-----|--------|
@@ -68,19 +79,23 @@ While the overlay is visible:
 | <kbd>,</kbd> | White background |
 | <kbd>u</kbd> | Undo |
 | <kbd>F1</kbd> | Toggle help screen |
-| <kbd>Esc</kbd> | Hide overlay |
+| <kbd>Esc</kbd> | Close overlay |
 
-## Global shortcut
+## Global shortcuts
 
 The XDG Global Shortcuts protocol is not yet widely supported by Wayland
-compositors, so Waydoodle falls back to listening for the `SIGUSR1` signal to
-toggle the drawing mode on and off.
+compositors, so Waydoodle falls back to listening for the `SIGUSR1` and
+`SIGUSR2` signals to toggle the overlay and close it, respectively.
 
-Register a global shortcut in your desktop environment or window manager of
-choice that executes:
+Register a global shortcut in your desktop environment or window
+manager of choice that executes:
 
 ```
 pkill -SIGUSR1 waydoodle
+```
+
+```
+pkill -SIGUSR2 waydoodle
 ```
 
 ## Acknowledgements

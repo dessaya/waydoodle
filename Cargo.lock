@@ -1266,7 +1266,7 @@ dependencies = [
 
 [[package]]
 name = "waydoodle"
-version = "1.0.0"
+version = "1.2.1"
 dependencies = [
  "bdf-reader",
  "calloop",

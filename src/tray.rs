@@ -4,6 +4,7 @@ use ksni::{MenuItem, Tray, menu::StandardItem};
 #[derive(Debug, Clone)]
 pub(crate) enum TrayEvent {
     ToggleOverlay,
+    CloseOverlay,
     Quit,
 }
 
@@ -14,6 +15,13 @@ pub(crate) struct WaydoodleTray {
 impl WaydoodleTray {
     pub(crate) fn new(sender: Sender<TrayEvent>) -> Self {
         Self { sender }
+    }
+
+    fn send(&self, ev: TrayEvent) {
+        let r = self.sender.send(ev);
+        if let Err(e) = r {
+            log::error!("Failed to send event from tray: {e}");
+        }
     }
 }
 
@@ -31,21 +39,27 @@ impl Tray for WaydoodleTray {
     }
 
     fn menu(&self) -> Vec<MenuItem<Self>> {
-        let sender_toggle = self.sender.clone();
-        let sender_quit = self.sender.clone();
         vec![
             StandardItem {
                 label: "Toggle overlay".into(),
-                activate: Box::new(move |_| {
-                    let _ = sender_toggle.send(TrayEvent::ToggleOverlay);
+                activate: Box::new(move |t: &mut WaydoodleTray| {
+                    t.send(TrayEvent::ToggleOverlay);
+                }),
+                ..Default::default()
+            }
+            .into(),
+            StandardItem {
+                label: "Close overlay".into(),
+                activate: Box::new(move |t: &mut WaydoodleTray| {
+                    t.send(TrayEvent::CloseOverlay);
                 }),
                 ..Default::default()
             }
             .into(),
             StandardItem {
                 label: "Quit".into(),
-                activate: Box::new(move |_| {
-                    let _ = sender_quit.send(TrayEvent::Quit);
+                activate: Box::new(move |t: &mut WaydoodleTray| {
+                    t.send(TrayEvent::Quit);
                 }),
                 ..Default::default()
             }

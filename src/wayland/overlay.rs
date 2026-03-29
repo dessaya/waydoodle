@@ -14,7 +14,7 @@ use wayland_client::protocol::wl_surface::WlSurface;
 
 use crate::{
     canvas::{Canvas, Rect},
-    waydoodle::{self, HistoryItem, Tool},
+    waydoodle::{self, DEFAULT_TOOL, HistoryItem, Overlay as _, Tool},
     wayland::{App, OverlayState},
 };
 
@@ -62,6 +62,8 @@ pub(super) struct Overlay {
 
     pub pending_damage: Option<Rect>,
     pub frame_requested: bool,
+
+    pub has_focus: bool,
 
     /// for OverlayTool
     pub tool: Tool,
@@ -120,7 +122,7 @@ impl waydoodle::App<Overlay> for App {
                     None,
                 );
                 layer_surface.set_anchor(Anchor::all());
-                layer_surface.set_keyboard_interactivity(KeyboardInteractivity::OnDemand);
+                layer_surface.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
                 layer_surface.set_size(0, 0); // Use full screen size
                 layer_surface.set_exclusive_zone(-1);
                 layer_surface.commit();
@@ -149,11 +151,93 @@ impl waydoodle::App<Overlay> for App {
         self.overlay = None;
     }
 
+    fn toggle_focus_or_destroy_overlay(&mut self) {
+        let Some(OverlayState::Ready(overlay)) = self.overlay.as_mut() else {
+            return;
+        };
+        match &overlay.window {
+            WaylandWindow::XdgWindow(_) => {
+                self.destroy_overlay();
+            }
+            WaylandWindow::LayerSurface(l) => {
+                let s = l.wl_surface();
+                if overlay.has_focus {
+                    // default (empty) region means the surface receives input events across its entire area
+                    let r = Region::new(&self.wayland.compositor_state)
+                        .expect("Failed to create input region for unfocusing overlay");
+                    s.set_input_region(Some(r.wl_region()));
+                    l.set_keyboard_interactivity(KeyboardInteractivity::None);
+                } else {
+                    // NULL region means the surface receives no input events
+                    s.set_input_region(None);
+                    l.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+                }
+                s.commit();
+                overlay.has_focus = !overlay.has_focus;
+            }
+        }
+    }
+
     fn get_overlay(&self) -> Option<Option<&Overlay>> {
         match &self.overlay {
             Some(OverlayState::Ready(overlay)) => Some(Some(overlay)),
             Some(OverlayState::Pending(_)) => Some(None),
             None => None,
+        }
+    }
+}
+
+impl App {
+    pub(crate) fn on_configure(&mut self, width: u32, height: u32) {
+        match &mut self.overlay {
+            Some(OverlayState::Pending(_)) => {
+                // Transition Pending → Ready: take the Window out and build the full Overlay.
+                let Some(OverlayState::Pending(window)) = self.overlay.take() else {
+                    unreachable!();
+                };
+                let canvas_buf = vec![0u8; width as usize * height as usize * 4];
+                let (pool, buffers) =
+                    Self::create_overlay_pool_and_buffers(&self.wayland.shm, width, height);
+                let mut overlay = Overlay {
+                    window,
+                    width,
+                    height,
+                    canvas_buf,
+                    pool,
+                    buffers,
+                    stale: [None, None],
+                    pending_damage: None,
+                    frame_requested: false,
+                    has_focus: true,
+                    tool: DEFAULT_TOOL,
+                    help: false,
+                    history: Vec::new(),
+                };
+                overlay.mark_dirty(&self.queue_handle, Rect::new(width, height));
+                self.overlay = Some(OverlayState::Ready(overlay));
+            }
+            Some(OverlayState::Ready(overlay)) => {
+                if width != overlay.width || height != overlay.height {
+                    log::debug!(
+                        "Overlay window resized to {}x{} -- recreating SHM buffers",
+                        width,
+                        height
+                    );
+                    let canvas_buf = vec![0u8; width as usize * height as usize * 4];
+                    let (pool, buffers) =
+                        Self::create_overlay_pool_and_buffers(&self.wayland.shm, width, height);
+                    overlay.canvas_buf = canvas_buf;
+                    overlay.pool = pool;
+                    overlay.buffers = buffers;
+                    overlay.stale = [None, None];
+                    overlay.width = width;
+                    overlay.height = height;
+                    if let Some(damage) = overlay.on_size_changed() {
+                        overlay.mark_dirty(&self.queue_handle, damage);
+                    }
+                }
+            }
+            None => {}
         }
     }
 }

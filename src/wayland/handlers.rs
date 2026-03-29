@@ -23,8 +23,8 @@ use wayland_client::{
 
 use crate::{
     canvas::{Point, Rect},
-    waydoodle::{self, App as _, DEFAULT_TOOL, Overlay as _, OverlayTool as _},
-    wayland::{App, Overlay},
+    waydoodle::{self, App as _, Overlay as _, OverlayTool as _},
+    wayland::App,
 };
 
 use super::{OverlayState, cursors::TabletCursorState, tablet::TabletState};
@@ -110,61 +110,13 @@ impl OutputHandler for App {
 }
 
 impl App {
-    fn configure(&mut self, width: u32, height: u32, qh: &QueueHandle<Self>) {
+    fn configure(&mut self, width: u32, height: u32, _: &QueueHandle<Self>) {
         log::debug!(
             "Received configure event for overlay window: {}x{}",
             width,
             height,
         );
-        match &mut self.overlay {
-            Some(OverlayState::Pending(_)) => {
-                // Transition Pending → Ready: take the Window out and build the full Overlay.
-                let Some(OverlayState::Pending(window)) = self.overlay.take() else {
-                    unreachable!();
-                };
-                let canvas_buf = vec![0u8; width as usize * height as usize * 4];
-                let (pool, buffers) =
-                    Self::create_overlay_pool_and_buffers(&self.wayland.shm, width, height);
-                let mut overlay = Overlay {
-                    window,
-                    width,
-                    height,
-                    canvas_buf,
-                    pool,
-                    buffers,
-                    stale: [None, None],
-                    pending_damage: None,
-                    frame_requested: false,
-                    tool: DEFAULT_TOOL,
-                    help: false,
-                    history: Vec::new(),
-                };
-                overlay.mark_dirty(qh, Rect::new(width, height));
-                self.overlay = Some(OverlayState::Ready(overlay));
-            }
-            Some(OverlayState::Ready(overlay)) => {
-                if width != overlay.width || height != overlay.height {
-                    log::debug!(
-                        "Overlay window resized to {}x{} -- recreating SHM buffers",
-                        width,
-                        height
-                    );
-                    let canvas_buf = vec![0u8; width as usize * height as usize * 4];
-                    let (pool, buffers) =
-                        Self::create_overlay_pool_and_buffers(&self.wayland.shm, width, height);
-                    overlay.canvas_buf = canvas_buf;
-                    overlay.pool = pool;
-                    overlay.buffers = buffers;
-                    overlay.stale = [None, None];
-                    overlay.width = width;
-                    overlay.height = height;
-                    if let Some(damage) = overlay.on_size_changed() {
-                        overlay.mark_dirty(qh, damage);
-                    }
-                }
-            }
-            None => {}
-        }
+        self.on_configure(width, height);
     }
 }
 
@@ -336,15 +288,15 @@ impl KeyboardHandler for App {
             return;
         };
         let (keep_open, redraw) = overlay.on_key_pressed(event.keysym);
+        if !keep_open {
+            self.destroy_overlay();
+            return;
+        }
         let shape = overlay.current_tool().cursor_shape();
         if redraw {
             overlay.mark_dirty(qh, Rect::new(overlay.width, overlay.height));
         }
-        if !keep_open {
-            self.on_toggle_overlay();
-        } else {
-            self.apply_cursor(shape, qh);
-        }
+        self.apply_cursor(shape, qh);
     }
 
     fn repeat_key(

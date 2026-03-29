@@ -344,6 +344,8 @@ where
 {
     fn create_overlay(&mut self);
     fn destroy_overlay(&mut self);
+    fn toggle_focus_or_destroy_overlay(&mut self);
+
     // Returns Some(Some(overlay)) if the overlay is active, Some(None) if it's
     // in the process of being created, and None if it doesn't exist at all.
     fn get_overlay(&self) -> Option<Option<&O>>;
@@ -352,7 +354,7 @@ where
         match self.get_overlay() {
             None => self.create_overlay(),
             Some(None) => (),
-            Some(Some(_)) => self.destroy_overlay(),
+            Some(Some(_)) => self.toggle_focus_or_destroy_overlay(),
         }
     }
 }
@@ -460,6 +462,10 @@ mod tests {
 
         fn destroy_overlay(&mut self) {
             self.overlay = None;
+        }
+
+        fn toggle_focus_or_destroy_overlay(&mut self) {
+            self.destroy_overlay();
         }
 
         fn get_overlay(&self) -> Option<Option<&MockOverlay>> {

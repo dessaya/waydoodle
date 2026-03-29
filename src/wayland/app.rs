@@ -24,9 +24,10 @@ use crate::{
 
 impl App {
     pub(crate) fn run() {
-        // Block SIGUSR1 before spawning any background threads (e.g. the tray)
+        // Block signals before spawning any background threads (e.g. the tray)
         // so they inherit the blocked mask. Signals::new() calls sigprocmask.
-        let sigusr1 = Signals::new(&[Signal::SIGUSR1]).expect("Failed to register SIGUSR1");
+        let signals =
+            Signals::new(&[Signal::SIGUSR1, Signal::SIGUSR2]).expect("Failed to register signals");
 
         let conn = Connection::connect_to_env().expect("Failed to connect to Wayland compositor");
         let (globals, event_queue) =
@@ -64,6 +65,7 @@ impl App {
 
         // Set up the calloop channel for tray events.
         let (tray_sender, tray_channel) = calloop::channel::channel::<TrayEvent>();
+        let tray_sender_signals = tray_sender.clone();
 
         // Spawn the tray service on a background thread.
         let tray = WaydoodleTray::new(tray_sender);
@@ -101,12 +103,19 @@ impl App {
             queue_handle: qh,
         };
 
-        // Handle SIGUSR1 to toggle the overlay.
+        // Register the signal source for toggling the overlay.
         {
             event_loop
                 .handle()
-                .insert_source(sigusr1, move |_, _, app| {
-                    app.on_toggle_overlay();
+                .insert_source(signals, move |ev, _, _| {
+                    let r = match ev.signal() {
+                        Signal::SIGUSR1 => tray_sender_signals.send(TrayEvent::ToggleOverlay),
+                        Signal::SIGUSR2 => tray_sender_signals.send(TrayEvent::CloseOverlay),
+                        _ => Ok(()),
+                    };
+                    if let Err(e) = r {
+                        log::error!("Failed to send event from signal handler: {e}");
+                    }
                 })
                 .expect("Failed to insert signal source");
         }
@@ -123,6 +132,9 @@ impl App {
                     match tray_event {
                         TrayEvent::ToggleOverlay => {
                             app.on_toggle_overlay();
+                        }
+                        TrayEvent::CloseOverlay => {
+                            app.destroy_overlay();
                         }
                         TrayEvent::Quit => {
                             loop_signal.stop();
