@@ -66,7 +66,8 @@ pub(super) struct Overlay {
     pub has_focus: bool,
 
     /// for OverlayTool
-    pub tool: Tool,
+    pub primary_tool: Tool,
+    pub override_tool: Option<Tool>,
 
     /// for OverlayHelp
     pub help: bool,
@@ -209,7 +210,8 @@ impl App {
                     pending_damage: None,
                     frame_requested: false,
                     has_focus: true,
-                    tool: DEFAULT_TOOL,
+                    primary_tool: DEFAULT_TOOL,
+                    override_tool: None,
                     help: false,
                     history: Vec::new(),
                 };
@@ -255,12 +257,20 @@ impl waydoodle::OverlayCanvas for Overlay {
 }
 
 impl waydoodle::OverlayTool for Overlay {
-    fn current_tool(&self) -> Tool {
-        self.tool
+    fn primary_tool(&self) -> Tool {
+        self.primary_tool
     }
 
-    fn set_current_tool(&mut self, tool: Tool) {
-        self.tool = tool;
+    fn set_primary_tool(&mut self, tool: Tool) {
+        self.primary_tool = tool;
+    }
+
+    fn override_tool(&self) -> Option<Tool> {
+        self.override_tool
+    }
+
+    fn set_override_tool(&mut self, tool: Option<Tool>) {
+        self.override_tool = tool;
     }
 }
 

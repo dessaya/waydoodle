@@ -8,7 +8,9 @@ use smithay_client_toolkit::{
     seat::{
         Capability, SeatHandler, SeatState,
         keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers, RawModifiers},
-        pointer::{BTN_LEFT, PointerEvent, PointerEventKind, PointerHandler},
+        pointer::{
+            BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, PointerEvent, PointerEventKind, PointerHandler,
+        },
     },
     shell::{
         wlr_layer::{LayerShellHandler, LayerSurface, LayerSurfaceConfigure},
@@ -23,7 +25,7 @@ use wayland_client::{
 
 use crate::{
     canvas::{Point, Rect},
-    waydoodle::{self, App as _, Overlay as _, OverlayTool as _},
+    waydoodle::{self, App as _, Overlay as _},
     wayland::App,
 };
 
@@ -177,10 +179,11 @@ impl SeatHandler for App {
                 .seat_state
                 .get_pointer(qh, &seat)
                 .expect("Failed to get pointer");
-
+            let device = self.cursors.shape_manager.get_shape_device(&wl_pointer, qh);
             self.pointers.push(super::PointerState {
                 seat: seat.clone(),
                 wl_pointer,
+                device,
                 enter_serial: 0,
                 model: waydoodle::PointerState::new(),
             });
@@ -287,16 +290,15 @@ impl KeyboardHandler for App {
         let Some(OverlayState::Ready(overlay)) = self.overlay.as_mut() else {
             return;
         };
-        let (keep_open, redraw) = overlay.on_key_pressed(event.keysym);
+        let (keep_open, redraw, shape) = overlay.on_key_pressed(event.keysym);
         if !keep_open {
             self.destroy_overlay();
             return;
         }
-        let shape = overlay.current_tool().cursor_shape();
         if redraw {
             overlay.mark_dirty(qh, Rect::new(overlay.width, overlay.height));
         }
-        self.apply_cursor(shape, qh);
+        self.apply_cursor(shape);
     }
 
     fn repeat_key(
@@ -362,9 +364,8 @@ impl PointerHandler for App {
                             x: event.position.0,
                             y: event.position.1,
                         };
-                        overlay.on_pointer_enter(&mut ptr.model, pos);
-                        let shape = overlay.current_tool().cursor_shape();
-                        self.apply_cursor(shape, qh);
+                        let shape = overlay.on_pointer_enter(&mut ptr.model, pos);
+                        self.apply_cursor(shape);
                     }
                 }
                 PointerEventKind::Leave { .. } => {
@@ -392,30 +393,40 @@ impl PointerHandler for App {
                     }
                 }
                 PointerEventKind::Press { button, .. } => {
-                    if button == BTN_LEFT {
-                        let Some(ptr) = self.pointers.iter_mut().find(|p| &p.wl_pointer == pointer)
-                        else {
-                            continue;
+                    let Some(ptr) = self.pointers.iter_mut().find(|p| &p.wl_pointer == pointer)
+                    else {
+                        continue;
+                    };
+                    let is_secondary_button = match button {
+                        BTN_LEFT => false,
+                        BTN_MIDDLE | BTN_RIGHT => true,
+                        _ => continue,
+                    };
+                    if let Some(OverlayState::Ready(overlay)) = self.overlay.as_mut() {
+                        let shape =
+                            overlay.on_pointer_button_pressed(&ptr.model, is_secondary_button);
+                        let pos = Point {
+                            x: event.position.0,
+                            y: event.position.1,
                         };
-                        if let Some(OverlayState::Ready(overlay)) = self.overlay.as_mut() {
-                            let pos = Point {
-                                x: event.position.0,
-                                y: event.position.1,
-                            };
-                            let damage = overlay.on_pointer_press(&mut ptr.model, pos);
-                            overlay.mark_dirty(qh, damage);
-                        }
+                        let damage = overlay.begin_stroke(&mut ptr.model, pos);
+                        overlay.mark_dirty(qh, damage);
+                        self.apply_cursor(shape);
                     }
                 }
                 PointerEventKind::Release { button, .. } => {
-                    if button == BTN_LEFT {
-                        let Some(ptr) = self.pointers.iter_mut().find(|p| &p.wl_pointer == pointer)
-                        else {
-                            continue;
-                        };
-                        if let Some(OverlayState::Ready(overlay)) = self.overlay.as_mut() {
-                            overlay.on_pointer_release(&mut ptr.model);
-                        }
+                    let Some(ptr) = self.pointers.iter_mut().find(|p| &p.wl_pointer == pointer)
+                    else {
+                        continue;
+                    };
+                    match button {
+                        BTN_LEFT | BTN_MIDDLE | BTN_RIGHT => (),
+                        _ => continue,
+                    };
+                    if let Some(OverlayState::Ready(overlay)) = self.overlay.as_mut() {
+                        overlay.end_stroke(&mut ptr.model);
+                        let shape = overlay.on_pointer_button_released();
+                        self.apply_cursor(shape);
                     }
                 }
                 PointerEventKind::Axis { .. } => {}

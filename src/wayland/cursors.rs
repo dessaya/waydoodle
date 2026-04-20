@@ -44,7 +44,7 @@ impl TabletCursorState {
 }
 
 pub(super) struct Cursors {
-    shape_manager: CursorShapeManager,
+    pub(super) shape_manager: CursorShapeManager,
     eraser: CursorSurface,
 }
 
@@ -136,24 +136,19 @@ impl CursorSurface {
 }
 
 impl App {
-    pub(super) fn apply_cursor(&mut self, shape: CursorShape, qh: &QueueHandle<Self>) {
-        self.set_pointer_cursor(shape, qh);
+    pub(super) fn apply_cursor(&mut self, shape: CursorShape) {
+        self.set_pointer_cursor(shape);
         self.set_tablet_cursor(shape);
     }
 
-    fn set_pointer_cursor(&self, shape: CursorShape, qh: &QueueHandle<Self>) {
+    fn set_pointer_cursor(&self, shape: CursorShape) {
         for ptr in &self.pointers {
             match shape {
                 CursorShape::Crosshair => {
-                    let device = self
-                        .cursors
-                        .shape_manager
-                        .get_shape_device(&ptr.wl_pointer, qh);
-                    device.set_shape(
+                    ptr.device.set_shape(
                         ptr.enter_serial,
                         wp_cursor_shape_device_v1::Shape::Crosshair,
                     );
-                    device.destroy();
                 }
                 CursorShape::Circle => {
                     let cursor = &self.cursors.eraser;

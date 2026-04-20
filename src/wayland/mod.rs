@@ -22,7 +22,10 @@ use smithay_client_toolkit::{
 };
 use tablet::TabletState;
 use wayland_client::protocol::{wl_keyboard, wl_pointer, wl_seat};
-use wayland_protocols::wp::tablet::zv2::client::zwp_tablet_manager_v2;
+use wayland_protocols::wp::{
+    cursor_shape::v1::client::wp_cursor_shape_device_v1::WpCursorShapeDeviceV1,
+    tablet::zv2::client::zwp_tablet_manager_v2,
+};
 
 use crate::{
     tray::WaydoodleTray,
@@ -38,8 +41,15 @@ struct KeyboardState {
 struct PointerState {
     pub seat: wl_seat::WlSeat,
     pub wl_pointer: wl_pointer::WlPointer,
+    pub device: WpCursorShapeDeviceV1,
     pub enter_serial: u32,
     pub model: waydoodle::PointerState,
+}
+
+impl Drop for PointerState {
+    fn drop(&mut self) {
+        self.device.destroy();
+    }
 }
 
 struct WaylandState {
