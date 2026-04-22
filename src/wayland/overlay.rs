@@ -13,8 +13,8 @@ use smithay_client_toolkit::{
 use wayland_client::protocol::wl_surface::WlSurface;
 
 use crate::{
-    canvas::{Canvas, Rect},
-    waydoodle::{self, DEFAULT_TOOL, HistoryItem, Overlay as _, Tool},
+    canvas::Rect,
+    waydoodle::{self},
     wayland::{App, OverlayState},
 };
 
@@ -41,12 +41,6 @@ impl WaylandWindow {
 
 pub(super) struct Overlay {
     pub window: WaylandWindow,
-    pub width: u32,
-    pub height: u32,
-
-    /// Off-screen pixel buffer that the model draws into. This is always
-    /// writable regardless of compositor buffer state.
-    pub canvas_buf: Vec<u8>,
 
     /// SHM pool and two presentation buffers. At frame time we pick whichever
     /// buffer the compositor has released, copy the dirty region from the
@@ -65,15 +59,17 @@ pub(super) struct Overlay {
 
     pub has_focus: bool,
 
-    /// for OverlayTool
-    pub primary_tool: Tool,
-    pub override_tool: Option<Tool>,
+    pub state: waydoodle::OverlayState,
+}
 
-    /// for OverlayHelp
-    pub help: bool,
+impl Overlay {
+    pub fn width(&self) -> u32 {
+        self.state.canvas.width
+    }
 
-    /// for OverlayHistory
-    pub history: Vec<HistoryItem>,
+    pub fn height(&self) -> u32 {
+        self.state.canvas.height
+    }
 }
 
 impl App {
@@ -196,104 +192,38 @@ impl App {
                 let Some(OverlayState::Pending(window)) = self.overlay.take() else {
                     unreachable!();
                 };
-                let canvas_buf = vec![0u8; width as usize * height as usize * 4];
                 let (pool, buffers) =
                     Self::create_overlay_pool_and_buffers(&self.wayland.shm, width, height);
                 let mut overlay = Overlay {
                     window,
-                    width,
-                    height,
-                    canvas_buf,
                     pool,
                     buffers,
                     stale: [None, None],
                     pending_damage: None,
                     frame_requested: false,
                     has_focus: true,
-                    primary_tool: DEFAULT_TOOL,
-                    override_tool: None,
-                    help: false,
-                    history: Vec::new(),
+                    state: waydoodle::OverlayState::new(width, height),
                 };
                 overlay.mark_dirty(&self.queue_handle, Rect::new(width, height));
                 self.overlay = Some(OverlayState::Ready(overlay));
             }
             Some(OverlayState::Ready(overlay)) => {
-                if width != overlay.width || height != overlay.height {
+                if width != overlay.width() || height != overlay.height() {
                     log::debug!(
                         "Overlay window resized to {}x{} -- recreating SHM buffers",
                         width,
                         height
                     );
-                    let canvas_buf = vec![0u8; width as usize * height as usize * 4];
+                    let damage = overlay.state.resize(width, height);
                     let (pool, buffers) =
                         Self::create_overlay_pool_and_buffers(&self.wayland.shm, width, height);
-                    overlay.canvas_buf = canvas_buf;
                     overlay.pool = pool;
                     overlay.buffers = buffers;
                     overlay.stale = [None, None];
-                    overlay.width = width;
-                    overlay.height = height;
-                    if let Some(damage) = overlay.on_size_changed() {
-                        overlay.mark_dirty(&self.queue_handle, damage);
-                    }
+                    overlay.mark_dirty(&self.queue_handle, damage);
                 }
             }
             None => {}
         }
-    }
-}
-
-impl waydoodle::OverlayCanvas for Overlay {
-    /// Returns a mutable reference to the off-screen canvas. This is always
-    /// available because the off-screen buffer is never held by the compositor.
-    fn canvas(&mut self) -> Option<Canvas<'_>> {
-        Some(Canvas {
-            buf: &mut self.canvas_buf,
-            width: self.width,
-            height: self.height,
-        })
-    }
-}
-
-impl waydoodle::OverlayTool for Overlay {
-    fn primary_tool(&self) -> Tool {
-        self.primary_tool
-    }
-
-    fn set_primary_tool(&mut self, tool: Tool) {
-        self.primary_tool = tool;
-    }
-
-    fn override_tool(&self) -> Option<Tool> {
-        self.override_tool
-    }
-
-    fn set_override_tool(&mut self, tool: Option<Tool>) {
-        self.override_tool = tool;
-    }
-}
-
-impl waydoodle::OverlayHelp for Overlay {
-    fn show_help(&self) -> bool {
-        self.help
-    }
-
-    fn set_show_help(&mut self, show: bool) {
-        self.help = show;
-    }
-}
-
-impl waydoodle::OverlayHistory for Overlay {
-    fn history(&self) -> &[HistoryItem] {
-        &self.history
-    }
-
-    fn push_history(&mut self, item: HistoryItem) {
-        self.history.push(item);
-    }
-
-    fn pop_history(&mut self) -> Option<HistoryItem> {
-        self.history.pop()
     }
 }

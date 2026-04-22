@@ -3,10 +3,7 @@ use wayland_client::QueueHandle;
 use wayland_client::protocol::wl_shm;
 
 use crate::canvas::{Canvas, Rect};
-use crate::{
-    waydoodle::OverlayHelp as _,
-    wayland::{App, Overlay},
-};
+use crate::wayland::{App, Overlay};
 
 impl Overlay {
     /// Create two SHM buffers, filled with transparent black.
@@ -77,22 +74,21 @@ impl Overlay {
     }
 
     fn flush_frame(&mut self) {
+        // Find a free SHM buffer. Try both; at least one should be available.
+        let (buf_idx, shm_canvas) = {
+            if let Some(shm_canvas) = self.pool.canvas(&self.buffers[0]) {
+                (0, shm_canvas)
+            } else if let Some(shm_canvas) = self.pool.canvas(&self.buffers[1]) {
+                (1, shm_canvas)
+            } else {
+                log::debug!("flush_frame: both SHM buffers held by compositor, deferring");
+                return;
+            }
+        };
+
         let damage = match self.pending_damage.take() {
             Some(d) => d,
             None => return,
-        };
-
-        let show_help = self.show_help();
-
-        // Find a free SHM buffer. Try both; at least one should be available.
-        let buf_idx = if self.pool.canvas(&self.buffers[0]).is_some() {
-            0
-        } else if self.pool.canvas(&self.buffers[1]).is_some() {
-            1
-        } else {
-            log::debug!("flush_frame: both SHM buffers held by compositor, deferring");
-            self.pending_damage = Some(damage);
-            return;
         };
 
         // The total region we must copy into this buffer: the current frame's
@@ -113,21 +109,17 @@ impl Overlay {
 
         // Copy only the affected rows from the off-screen canvas into the SHM
         // buffer.
-        let shm_canvas = self
-            .pool
-            .canvas(&self.buffers[buf_idx])
-            .expect("buffer availability was just checked");
-        Self::copy_rect(shm_canvas, &self.canvas_buf, self.width, &copy_rect);
+        Self::copy_rect(
+            shm_canvas,
+            &self.state.canvas.buf,
+            self.state.canvas.width,
+            &copy_rect,
+        );
 
         // Composite the help panel directly into the SHM buffer (transient UI
         // that should not persist in the off-screen canvas).
-        if show_help {
-            let len = self.canvas_buf.len();
-            let mut canvas = Canvas {
-                buf: &mut shm_canvas[..len],
-                width: self.width,
-                height: self.height,
-            };
+        if self.state.show_help {
+            let mut canvas = Canvas::new(self.width(), self.height());
             crate::help::render_help(&mut canvas);
         }
 

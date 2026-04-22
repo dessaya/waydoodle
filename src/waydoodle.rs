@@ -2,20 +2,6 @@ use smithay_client_toolkit::seat::keyboard::Keysym;
 
 use crate::canvas::{Canvas, Point, Rect};
 
-pub(crate) struct PointerState {
-    pub pos: Point,
-    pub current_stroke: Option<Stroke>,
-}
-
-impl PointerState {
-    pub(crate) fn new() -> Self {
-        Self {
-            pos: Point { x: 0.0, y: 0.0 },
-            current_stroke: None,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum KeyAction {
     SetTool(Tool),
@@ -137,12 +123,16 @@ pub(crate) const ALL_KEYS: &[ToolInfo] = &[
     },
 ];
 
-pub(crate) const DEFAULT_TOOL: Tool = Tool::Pen(RED);
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Tool {
     Pen([u8; 4]),
     Eraser,
+}
+
+impl Default for Tool {
+    fn default() -> Self {
+        Tool::Pen(RED)
+    }
 }
 
 impl Tool {
@@ -174,121 +164,74 @@ pub(crate) enum CursorShape {
     Circle,
 }
 
-#[derive(Clone)]
 pub(crate) struct Stroke {
     pub tool: Tool,
     pub points: Vec<Point>,
 }
 
-#[derive(Clone)]
 pub(crate) enum HistoryItem {
     Stroke(Stroke),
     Clear,
     FillBackground([u8; 4]),
 }
 
-pub(crate) trait OverlayCanvas {
-    fn canvas(&mut self) -> Option<Canvas<'_>>;
+pub(crate) struct OverlayState {
+    pub canvas: Canvas,
+
+    pub current_stroke: Option<Stroke>,
+    pub primary_tool: Tool,
+    pub override_tool: Option<Tool>,
+    pub show_help: bool,
+    pub history: Vec<HistoryItem>,
 }
 
-pub(crate) trait OverlayTool {
-    fn primary_tool(&self) -> Tool;
-    fn set_primary_tool(&mut self, tool: Tool);
-
-    fn override_tool(&self) -> Option<Tool>;
-    fn set_override_tool(&mut self, tool: Option<Tool>);
-
-    fn current_tool(&self) -> Tool {
-        self.override_tool().unwrap_or_else(|| self.primary_tool())
-    }
-}
-
-pub(crate) trait OverlayHelp {
-    fn show_help(&self) -> bool;
-    fn set_show_help(&mut self, show: bool);
-
-    fn on_toggle_help(&mut self) {
-        self.set_show_help(!self.show_help());
-    }
-}
-
-pub(crate) trait OverlayHistory {
-    fn history(&self) -> &[HistoryItem];
-    fn push_history(&mut self, item: HistoryItem);
-    fn pop_history(&mut self) -> Option<HistoryItem>;
-}
-
-const ZERO_RECT: Rect = Rect {
-    x: 0,
-    y: 0,
-    width: 0,
-    height: 0,
-};
-
-fn replay_history(canvas: &mut Canvas, history: &[HistoryItem]) {
-    canvas.clear();
-    for item in history {
-        match item {
-            HistoryItem::Stroke(stroke) => {
-                let radius = stroke.tool.brush_radius();
-                let pixel = stroke.tool.pixel_color();
-                if let Some(first) = stroke.points.first() {
-                    canvas.draw_circle(*first, radius, pixel);
-                    for pair in stroke.points.windows(2) {
-                        canvas.draw_line(pair[0], pair[1], radius, pixel);
-                    }
-                }
-            }
-            HistoryItem::Clear => {
-                canvas.clear();
-            }
-            HistoryItem::FillBackground(color) => {
-                canvas.fill(*color);
-            }
+impl OverlayState {
+    pub fn new(width: u32, height: u32) -> Self {
+        Self {
+            canvas: Canvas::new(width, height),
+            current_stroke: None,
+            primary_tool: Tool::default(),
+            override_tool: None,
+            show_help: false,
+            history: Vec::new(),
         }
     }
-}
 
-pub(crate) trait Overlay:
-    OverlayCanvas + OverlayTool + OverlayHelp + OverlayHistory
-{
+    pub fn current_tool(&self) -> Tool {
+        self.override_tool.unwrap_or(self.primary_tool)
+    }
+
     // Returns (keep_open, redraw, cursor)
-    fn on_key_pressed(&mut self, keysym: Keysym) -> (bool, bool, CursorShape) {
+    pub fn on_key_pressed(&mut self, keysym: Keysym) -> (bool, bool, CursorShape) {
         let Some(info) = ALL_KEYS.iter().find(|i| i.keysym == keysym) else {
             return (true, false, self.current_tool().cursor_shape());
         };
         let (keep_open, redraw) = match info.action {
             KeyAction::SetTool(tool) => {
-                self.set_primary_tool(tool);
+                self.primary_tool = tool;
                 (true, false)
             }
             KeyAction::Clear => {
-                self.push_history(HistoryItem::Clear);
-                if let Some(mut canvas) = self.canvas() {
-                    canvas.clear();
-                }
+                self.canvas.clear();
+                self.history.push(HistoryItem::Clear);
                 (true, true)
             }
             KeyAction::FillBackground(color) => {
-                self.push_history(HistoryItem::FillBackground(color));
-                if let Some(mut canvas) = self.canvas() {
-                    canvas.fill(color);
-                }
+                self.canvas.fill(color);
+                self.history.push(HistoryItem::FillBackground(color));
                 (true, true)
             }
             KeyAction::Undo => {
-                if self.pop_history().is_some() {
-                    let history: Vec<HistoryItem> = self.history().to_vec();
-                    if let Some(mut canvas) = self.canvas() {
-                        replay_history(&mut canvas, &history);
-                    }
+                if self.history.pop().is_some() {
+                    self.canvas.clear();
+                    self.replay_history();
                     (true, true)
                 } else {
                     (true, false)
                 }
             }
             KeyAction::ToggleHelp => {
-                self.on_toggle_help();
+                self.show_help = !self.show_help;
                 (true, true)
             }
             KeyAction::HideOverlay => (false, false),
@@ -296,87 +239,98 @@ pub(crate) trait Overlay:
         (keep_open, redraw, self.current_tool().cursor_shape())
     }
 
-    fn on_pointer_enter(&mut self, pointer: &mut PointerState, pos: Point) -> CursorShape {
-        pointer.pos = pos;
+    fn replay_history(&mut self) {
+        for item in self.history.iter() {
+            match item {
+                HistoryItem::Stroke(stroke) => {
+                    let radius = stroke.tool.brush_radius();
+                    let pixel = stroke.tool.pixel_color();
+                    if let Some(first) = stroke.points.first() {
+                        self.canvas.draw_circle(*first, radius, pixel);
+                        for pair in stroke.points.windows(2) {
+                            self.canvas.draw_line(pair[0], pair[1], radius, pixel);
+                        }
+                    }
+                }
+                HistoryItem::Clear => {
+                    self.canvas.clear();
+                }
+                HistoryItem::FillBackground(color) => {
+                    self.canvas.fill(*color);
+                }
+            }
+        }
+    }
+
+    pub fn on_pointer_enter(&mut self) -> CursorShape {
         self.current_tool().cursor_shape()
     }
 
-    fn on_pointer_leave(&mut self, pointer: &mut PointerState) {
-        pointer.current_stroke = None;
+    pub fn on_pointer_leave(&mut self) {
+        self.current_stroke = None;
     }
 
-    fn on_pointer_button_pressed(
-        &mut self,
-        pointer: &PointerState,
-        is_secondary_button: bool,
-    ) -> CursorShape {
-        if pointer.current_stroke.is_some() {
+    pub fn on_pointer_button_pressed(&mut self, is_secondary_button: bool) -> CursorShape {
+        if self.current_stroke.is_some() {
             return self.current_tool().cursor_shape();
         }
-        self.set_override_tool(if is_secondary_button {
+        self.override_tool = if is_secondary_button {
             Some(Tool::Eraser)
         } else {
             None
-        });
+        };
         self.current_tool().cursor_shape()
     }
 
-    fn on_pointer_button_released(&mut self) -> CursorShape {
-        self.set_override_tool(None);
+    pub fn on_pointer_button_released(&mut self) -> CursorShape {
+        self.override_tool = None;
         self.current_tool().cursor_shape()
     }
 
-    fn begin_stroke(&mut self, pointer: &mut PointerState, pos: Point) -> Rect {
-        pointer.pos = pos;
-        if pointer.current_stroke.is_some() {
-            return ZERO_RECT;
-        }
+    pub fn begin_stroke(&mut self, pos: Point) -> Rect {
+        if self.current_stroke.is_some() {
+            return Rect::zero();
+        };
         let tool = self.current_tool();
         let radius = tool.brush_radius();
         let pixel = tool.pixel_color();
-        pointer.current_stroke = Some(Stroke {
+        self.current_stroke = Some(Stroke {
             tool,
             points: vec![pos],
         });
-        self.canvas()
-            .map(|mut c| c.draw_circle(pos, radius, pixel))
-            .unwrap_or(ZERO_RECT)
+        self.canvas.draw_circle(pos, radius, pixel)
     }
 
-    fn end_stroke(&mut self, pointer: &mut PointerState) {
-        let Some(stroke) = pointer.current_stroke.take() else {
+    pub fn end_stroke(&mut self) {
+        let Some(stroke) = self.current_stroke.take() else {
             return;
         };
-        self.push_history(HistoryItem::Stroke(stroke));
+        self.history.push(HistoryItem::Stroke(stroke));
     }
 
-    fn on_pointer_motion(&mut self, pointer: &mut PointerState, pos: Point) -> Option<Rect> {
-        let prev = pointer.pos;
-        pointer.pos = pos;
-        let stroke = pointer.current_stroke.as_mut()?;
-        stroke.points.push(pos);
+    pub fn on_pointer_motion(&mut self, pos: Point) -> Option<Rect> {
+        let mut stroke = self.current_stroke.take()?;
+        let prev = *stroke.points.last()?;
         let radius = stroke.tool.brush_radius();
         let pixel = stroke.tool.pixel_color();
-        Some(
-            self.canvas()
-                .map(|mut c| c.draw_line(prev, pos, radius, pixel))
-                .unwrap_or(ZERO_RECT),
-        )
+        stroke.points.push(pos);
+        self.current_stroke = Some(stroke);
+        Some(self.canvas.draw_line(prev, pos, radius, pixel))
     }
 
-    fn on_size_changed(&mut self) -> Option<Rect> {
-        while self.pop_history().is_some() {}
-        let mut canvas = self.canvas()?;
-        Some(canvas.clear())
+    pub fn resize(&mut self, width: u32, height: u32) -> Rect {
+        self.canvas = Canvas::new(width, height);
+        self.history = Vec::new();
+        Rect {
+            x: 0,
+            y: 0,
+            width: width as i32,
+            height: height as i32,
+        }
     }
 }
 
-impl<T: OverlayCanvas + OverlayTool + OverlayHelp + OverlayHistory> Overlay for T {}
-
-pub(crate) trait App<O>
-where
-    O: OverlayCanvas + OverlayTool + OverlayHelp + OverlayHistory,
-{
+pub(crate) trait App<O> {
     fn create_overlay(&mut self);
     fn destroy_overlay(&mut self);
     fn toggle_focus_or_destroy_overlay(&mut self);
@@ -397,89 +351,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::canvas::{Canvas, Point};
+    use crate::canvas::Point;
 
     const TEST_WIDTH: u32 = 64;
     const TEST_HEIGHT: u32 = 64;
 
-    struct MockOverlay {
-        buf: Vec<u8>,
-        width: u32,
-        height: u32,
-        primary_tool: Tool,
-        override_tool: Option<Tool>,
-        help: bool,
-        history: Vec<HistoryItem>,
-    }
-
-    impl MockOverlay {
-        fn new(width: u32, height: u32) -> Self {
-            Self {
-                buf: vec![0u8; (width * height * 4) as usize],
-                width,
-                height,
-                primary_tool: DEFAULT_TOOL,
-                override_tool: None,
-                help: false,
-                history: Vec::new(),
-            }
-        }
-    }
-
-    impl OverlayCanvas for MockOverlay {
-        fn canvas(&mut self) -> Option<Canvas<'_>> {
-            Some(Canvas {
-                buf: &mut self.buf,
-                width: self.width,
-                height: self.height,
-            })
-        }
-    }
-
-    impl OverlayTool for MockOverlay {
-        fn primary_tool(&self) -> Tool {
-            self.primary_tool
-        }
-
-        fn set_primary_tool(&mut self, tool: Tool) {
-            self.primary_tool = tool;
-        }
-
-        fn override_tool(&self) -> Option<Tool> {
-            self.override_tool
-        }
-
-        fn set_override_tool(&mut self, tool: Option<Tool>) {
-            self.override_tool = tool;
-        }
-    }
-
-    impl OverlayHelp for MockOverlay {
-        fn show_help(&self) -> bool {
-            self.help
-        }
-
-        fn set_show_help(&mut self, show: bool) {
-            self.help = show;
-        }
-    }
-
-    impl OverlayHistory for MockOverlay {
-        fn history(&self) -> &[HistoryItem] {
-            &self.history
-        }
-
-        fn push_history(&mut self, item: HistoryItem) {
-            self.history.push(item);
-        }
-
-        fn pop_history(&mut self) -> Option<HistoryItem> {
-            self.history.pop()
-        }
-    }
-
     struct MockApp {
-        overlay: Option<Option<MockOverlay>>,
+        overlay: Option<Option<OverlayState>>,
     }
 
     impl MockApp {
@@ -495,14 +373,14 @@ mod tests {
 
         fn with_overlay() -> Self {
             Self {
-                overlay: Some(Some(MockOverlay::new(TEST_WIDTH, TEST_HEIGHT))),
+                overlay: Some(Some(OverlayState::new(TEST_WIDTH, TEST_HEIGHT))),
             }
         }
     }
 
-    impl App<MockOverlay> for MockApp {
+    impl App<OverlayState> for MockApp {
         fn create_overlay(&mut self) {
-            self.overlay = Some(Some(MockOverlay::new(TEST_WIDTH, TEST_HEIGHT)));
+            self.overlay = Some(Some(OverlayState::new(TEST_WIDTH, TEST_HEIGHT)));
         }
 
         fn destroy_overlay(&mut self) {
@@ -513,12 +391,8 @@ mod tests {
             self.destroy_overlay();
         }
 
-        fn get_overlay(&self) -> Option<Option<&MockOverlay>> {
-            match &self.overlay {
-                None => None,
-                Some(None) => Some(None),
-                Some(Some(o)) => Some(Some(o)),
-            }
+        fn get_overlay(&self) -> Option<Option<&OverlayState>> {
+            self.overlay.as_ref().map(|o| o.as_ref())
         }
     }
 
@@ -566,7 +440,7 @@ mod tests {
 
     #[test]
     fn default_tool_is_red_pen() {
-        assert_eq!(DEFAULT_TOOL, Tool::Pen(RED));
+        assert_eq!(Tool::default(), Tool::Pen(RED));
     }
 
     #[test]
@@ -646,7 +520,7 @@ mod tests {
 
     #[test]
     fn on_key_pressed_r_sets_red_pen() {
-        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
         overlay.primary_tool = Tool::Eraser;
         let (keep, redraw, shape) = overlay.on_key_pressed(Keysym::r);
         assert!(keep);
@@ -657,7 +531,7 @@ mod tests {
 
     #[test]
     fn on_key_pressed_e_sets_eraser() {
-        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
         let (keep, redraw, shape) = overlay.on_key_pressed(Keysym::e);
         assert!(keep);
         assert!(!redraw);
@@ -667,31 +541,31 @@ mod tests {
 
     #[test]
     fn on_key_pressed_c_clears_canvas() {
-        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
-        overlay.buf[0..4].copy_from_slice(&RED);
-        overlay.buf[100..104].copy_from_slice(&BLUE);
+        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
+        overlay.canvas.buf[0..4].copy_from_slice(&RED);
+        overlay.canvas.buf[100..104].copy_from_slice(&BLUE);
 
         let (keep, redraw, shape) = overlay.on_key_pressed(Keysym::c);
         assert!(keep);
         assert!(redraw);
         assert_eq!(shape, CursorShape::Crosshair);
-        assert!(overlay.buf.iter().all(|&b| b == 0));
+        assert!(overlay.canvas.buf.iter().all(|&b| b == 0));
     }
 
     #[test]
     fn on_key_pressed_f1_toggles_help() {
-        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
-        assert!(!overlay.help);
+        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
+        assert!(!overlay.show_help);
 
         let (keep, redraw, _) = overlay.on_key_pressed(Keysym::F1);
         assert!(keep);
         assert!(redraw);
-        assert!(overlay.help);
+        assert!(overlay.show_help);
     }
 
     #[test]
     fn on_key_pressed_escape_returns_hide() {
-        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
         let (keep, redraw, _) = overlay.on_key_pressed(Keysym::Escape);
         assert!(!keep);
         assert!(!redraw);
@@ -699,26 +573,25 @@ mod tests {
 
     #[test]
     fn on_key_pressed_unbound_key_changes_nothing() {
-        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
         let original_tool = overlay.primary_tool;
-        let original_help = overlay.help;
+        let original_help = overlay.show_help;
 
         let (keep, redraw, _) = overlay.on_key_pressed(Keysym::z);
         assert!(keep);
         assert!(!redraw);
         assert_eq!(overlay.primary_tool, original_tool);
-        assert_eq!(overlay.help, original_help);
+        assert_eq!(overlay.show_help, original_help);
     }
 
     #[test]
     fn on_pointer_motion_with_pen_draws_pixels() {
-        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
         overlay.primary_tool = Tool::Pen(RED);
-        let mut ptr = PointerState::new();
-        overlay.on_pointer_button_pressed(&ptr, false);
-        overlay.begin_stroke(&mut ptr, Point { x: 10.0, y: 10.0 });
+        overlay.on_pointer_button_pressed(false);
+        overlay.begin_stroke(Point { x: 10.0, y: 10.0 });
 
-        let damage = overlay.on_pointer_motion(&mut ptr, Point { x: 20.0, y: 10.0 });
+        let damage = overlay.on_pointer_motion(Point { x: 20.0, y: 10.0 });
         let damage = damage.expect("expected damage from motion while pressed");
 
         assert!(damage.width > 0);
@@ -726,7 +599,7 @@ mod tests {
 
         let mut found_red = false;
         for x in 10..=20 {
-            if pixel_at(&overlay.buf, TEST_WIDTH, x, 10) == RED {
+            if pixel_at(&overlay.canvas.buf, TEST_WIDTH, x, 10) == RED {
                 found_red = true;
                 break;
             }
@@ -736,139 +609,123 @@ mod tests {
 
     #[test]
     fn on_pointer_motion_while_not_pressed_returns_none() {
-        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
-        let mut ptr = PointerState::new();
+        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
 
-        let damage = overlay.on_pointer_motion(&mut ptr, Point { x: 20.0, y: 10.0 });
+        let damage = overlay.on_pointer_motion(Point { x: 20.0, y: 10.0 });
         assert!(damage.is_none());
     }
 
     #[test]
     fn on_pointer_motion_with_eraser_clears_pixels() {
-        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
         overlay.primary_tool = Tool::Pen(RED);
-        let mut ptr = PointerState::new();
-        overlay.on_pointer_button_pressed(&ptr, false);
-        overlay.begin_stroke(&mut ptr, Point { x: 10.0, y: 30.0 });
-        overlay.on_pointer_motion(&mut ptr, Point { x: 30.0, y: 30.0 });
-        overlay.end_stroke(&mut ptr);
+        overlay.on_pointer_button_pressed(false);
+        overlay.begin_stroke(Point { x: 10.0, y: 30.0 });
+        overlay.on_pointer_motion(Point { x: 30.0, y: 30.0 });
+        overlay.end_stroke();
         overlay.on_pointer_button_released();
 
         overlay.primary_tool = Tool::Eraser;
-        overlay.on_pointer_button_pressed(&ptr, false);
-        overlay.begin_stroke(&mut ptr, Point { x: 10.0, y: 30.0 });
-        let damage = overlay.on_pointer_motion(&mut ptr, Point { x: 30.0, y: 30.0 });
+        overlay.on_pointer_button_pressed(false);
+        overlay.begin_stroke(Point { x: 10.0, y: 30.0 });
+        let damage = overlay.on_pointer_motion(Point { x: 30.0, y: 30.0 });
         let damage = damage.expect("expected damage from eraser motion");
 
         assert!(damage.width > 0);
         assert!(damage.height > 0);
 
-        let center_pixel = pixel_at(&overlay.buf, TEST_WIDTH, 20, 30);
+        let center_pixel = pixel_at(&overlay.canvas.buf, TEST_WIDTH, 20, 30);
         assert_eq!(center_pixel, [0, 0, 0, 0]);
     }
 
     #[test]
     fn right_mouse_button_uses_eraser_tool() {
-        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
         overlay.primary_tool = Tool::Pen(RED);
-        let mut ptr = PointerState::new();
-        overlay.on_pointer_button_pressed(&ptr, false);
-        overlay.begin_stroke(&mut ptr, Point { x: 10.0, y: 30.0 });
-        overlay.on_pointer_motion(&mut ptr, Point { x: 30.0, y: 30.0 });
-        overlay.end_stroke(&mut ptr);
+        overlay.on_pointer_button_pressed(false);
+        overlay.begin_stroke(Point { x: 10.0, y: 30.0 });
+        overlay.on_pointer_motion(Point { x: 30.0, y: 30.0 });
+        overlay.end_stroke();
         overlay.on_pointer_button_released();
 
-        overlay.on_pointer_button_pressed(&ptr, true);
-        overlay.begin_stroke(&mut ptr, Point { x: 10.0, y: 30.0 });
-        let damage = overlay.on_pointer_motion(&mut ptr, Point { x: 30.0, y: 30.0 });
+        overlay.on_pointer_button_pressed(true);
+        overlay.begin_stroke(Point { x: 10.0, y: 30.0 });
+        let damage = overlay.on_pointer_motion(Point { x: 30.0, y: 30.0 });
         let damage = damage.expect("expected damage from right-button motion");
-        overlay.end_stroke(&mut ptr);
+        overlay.end_stroke();
         overlay.on_pointer_button_released();
 
         assert!(damage.width > 0);
         assert!(damage.height > 0);
 
-        let center_pixel = pixel_at(&overlay.buf, TEST_WIDTH, 20, 30);
+        let center_pixel = pixel_at(&overlay.canvas.buf, TEST_WIDTH, 20, 30);
         assert_eq!(center_pixel, [0, 0, 0, 0]);
     }
 
     #[test]
     fn begin_stroke_draws_circle_at_point() {
-        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
         overlay.primary_tool = Tool::Pen(GREEN);
-        let mut ptr = PointerState::new();
 
-        overlay.on_pointer_button_pressed(&ptr, false);
-        let damage = overlay.begin_stroke(&mut ptr, Point { x: 32.0, y: 32.0 });
+        overlay.on_pointer_button_pressed(false);
+        let damage = overlay.begin_stroke(Point { x: 32.0, y: 32.0 });
 
         assert!(damage.width > 0);
         assert!(damage.height > 0);
 
-        let p = pixel_at(&overlay.buf, TEST_WIDTH, 32, 32);
+        let p = pixel_at(&overlay.canvas.buf, TEST_WIDTH, 32, 32);
         assert_eq!(p, GREEN);
     }
 
     #[test]
     fn on_pointer_leave_clears_current_stroke() {
-        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
-        let mut ptr = PointerState::new();
-        overlay.on_pointer_button_pressed(&ptr, false);
-        overlay.begin_stroke(&mut ptr, Point { x: 10.0, y: 10.0 });
-        assert!(ptr.current_stroke.is_some());
-        overlay.on_pointer_leave(&mut ptr);
-        assert!(ptr.current_stroke.is_none());
+        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
+        overlay.on_pointer_button_pressed(false);
+        overlay.begin_stroke(Point { x: 10.0, y: 10.0 });
+        assert!(overlay.current_stroke.is_some());
+        overlay.on_pointer_leave();
+        assert!(overlay.current_stroke.is_none());
     }
 
     #[test]
     fn end_stroke_clears_current_stroke() {
-        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
-        let mut ptr = PointerState::new();
-        overlay.on_pointer_button_pressed(&ptr, false);
-        overlay.begin_stroke(&mut ptr, Point { x: 10.0, y: 10.0 });
-        assert!(ptr.current_stroke.is_some());
-        overlay.end_stroke(&mut ptr);
+        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
+        overlay.on_pointer_button_pressed(false);
+        overlay.begin_stroke(Point { x: 10.0, y: 10.0 });
+        assert!(overlay.current_stroke.is_some());
+        overlay.end_stroke();
         overlay.on_pointer_button_released();
-        assert!(ptr.current_stroke.is_none());
-    }
-
-    #[test]
-    fn on_pointer_enter_updates_pos() {
-        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
-        let mut ptr = PointerState::new();
-        overlay.on_pointer_enter(&mut ptr, Point { x: 42.0, y: 17.0 });
-        assert_eq!(ptr.pos.x, 42.0);
-        assert_eq!(ptr.pos.y, 17.0);
+        assert!(overlay.current_stroke.is_none());
     }
 
     #[test]
     fn on_size_changed_clears_canvas_and_returns_full_rect() {
-        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
-        overlay.buf[0..4].copy_from_slice(&RED);
+        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
+        overlay.canvas.buf[0..4].copy_from_slice(&RED);
 
-        let rect = overlay.on_size_changed();
-        let rect = rect.unwrap();
+        let rect = overlay.resize(TEST_WIDTH, TEST_HEIGHT);
         assert_eq!(rect.x, 0);
         assert_eq!(rect.y, 0);
         assert_eq!(rect.width, TEST_WIDTH as i32);
         assert_eq!(rect.height, TEST_HEIGHT as i32);
-        assert!(overlay.buf.iter().all(|&b| b == 0));
+        assert!(overlay.canvas.buf.iter().all(|&b| b == 0));
     }
 
     #[test]
     fn toggle_help_false_to_true() {
-        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
-        assert!(!overlay.show_help());
-        overlay.on_toggle_help();
-        assert!(overlay.show_help());
+        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
+        assert!(!overlay.show_help);
+        overlay.on_key_pressed(Keysym::F1);
+        assert!(overlay.show_help);
     }
 
     #[test]
     fn toggle_help_true_to_false() {
-        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
-        overlay.help = true;
-        assert!(overlay.show_help());
-        overlay.on_toggle_help();
-        assert!(!overlay.show_help());
+        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
+        overlay.show_help = true;
+        assert!(overlay.show_help);
+        overlay.on_key_pressed(Keysym::F1);
+        assert!(!overlay.show_help);
     }
 
     #[test]
@@ -905,13 +762,12 @@ mod tests {
 
     #[test]
     fn on_key_pressed_u_undoes_last_stroke() {
-        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
         overlay.primary_tool = Tool::Pen(RED);
-        let mut ptr = PointerState::new();
-        overlay.on_pointer_button_pressed(&ptr, false);
-        overlay.begin_stroke(&mut ptr, Point { x: 10.0, y: 10.0 });
-        overlay.on_pointer_motion(&mut ptr, Point { x: 20.0, y: 10.0 });
-        overlay.end_stroke(&mut ptr);
+        overlay.on_pointer_button_pressed(false);
+        overlay.begin_stroke(Point { x: 10.0, y: 10.0 });
+        overlay.on_pointer_motion(Point { x: 20.0, y: 10.0 });
+        overlay.end_stroke();
         overlay.on_pointer_button_released();
 
         assert_eq!(overlay.history.len(), 1);
@@ -920,88 +776,84 @@ mod tests {
         assert!(keep);
         assert!(redraw);
         assert!(overlay.history.is_empty());
-        assert!(overlay.buf.iter().all(|&b| b == 0));
+        assert!(overlay.canvas.buf.iter().all(|&b| b == 0));
     }
 
     #[test]
     fn on_key_pressed_u_with_empty_strokes_is_noop() {
-        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
-        let buf_before: Vec<u8> = overlay.buf.clone();
+        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
+        let buf_before: Vec<u8> = overlay.canvas.buf.clone();
 
         let (keep, redraw, _) = overlay.on_key_pressed(Keysym::u);
         assert!(keep);
         assert!(!redraw);
-        assert_eq!(overlay.buf, buf_before);
+        assert_eq!(overlay.canvas.buf, buf_before);
     }
 
     #[test]
     fn on_key_pressed_c_then_u_restores_drawing() {
-        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
         overlay.primary_tool = Tool::Pen(RED);
-        let mut ptr = PointerState::new();
-        overlay.on_pointer_button_pressed(&ptr, false);
-        overlay.begin_stroke(&mut ptr, Point { x: 10.0, y: 10.0 });
-        overlay.on_pointer_motion(&mut ptr, Point { x: 20.0, y: 10.0 });
-        overlay.end_stroke(&mut ptr);
+        overlay.on_pointer_button_pressed(false);
+        overlay.begin_stroke(Point { x: 10.0, y: 10.0 });
+        overlay.on_pointer_motion(Point { x: 20.0, y: 10.0 });
+        overlay.end_stroke();
         overlay.on_pointer_button_released();
 
-        let buf_after_draw: Vec<u8> = overlay.buf.clone();
+        let buf_after_draw: Vec<u8> = overlay.canvas.buf.clone();
 
         let (keep, redraw, shape) = overlay.on_key_pressed(Keysym::c);
         assert!(keep);
         assert!(redraw);
         assert_eq!(shape, CursorShape::Crosshair);
-        assert!(overlay.buf.iter().all(|&b| b == 0));
+        assert!(overlay.canvas.buf.iter().all(|&b| b == 0));
 
         let (keep, redraw, _) = overlay.on_key_pressed(Keysym::u);
         assert!(keep);
         assert!(redraw);
-        assert_eq!(overlay.buf, buf_after_draw);
+        assert_eq!(overlay.canvas.buf, buf_after_draw);
     }
 
     #[test]
     fn multiple_strokes_undo_in_order() {
-        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
-        let mut ptr = PointerState::new();
+        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
 
         overlay.primary_tool = Tool::Pen(RED);
-        overlay.on_pointer_button_pressed(&ptr, false);
-        overlay.begin_stroke(&mut ptr, Point { x: 10.0, y: 10.0 });
-        overlay.on_pointer_motion(&mut ptr, Point { x: 20.0, y: 10.0 });
-        overlay.end_stroke(&mut ptr);
+        overlay.on_pointer_button_pressed(false);
+        overlay.begin_stroke(Point { x: 10.0, y: 10.0 });
+        overlay.on_pointer_motion(Point { x: 20.0, y: 10.0 });
+        overlay.end_stroke();
         overlay.on_pointer_button_released();
-        let buf_after_first: Vec<u8> = overlay.buf.clone();
+        let buf_after_first: Vec<u8> = overlay.canvas.buf.clone();
 
         overlay.primary_tool = Tool::Pen(BLUE);
-        overlay.on_pointer_button_pressed(&ptr, false);
-        overlay.begin_stroke(&mut ptr, Point { x: 10.0, y: 50.0 });
-        overlay.on_pointer_motion(&mut ptr, Point { x: 20.0, y: 50.0 });
-        overlay.end_stroke(&mut ptr);
+        overlay.on_pointer_button_pressed(false);
+        overlay.begin_stroke(Point { x: 10.0, y: 50.0 });
+        overlay.on_pointer_motion(Point { x: 20.0, y: 50.0 });
+        overlay.end_stroke();
         overlay.on_pointer_button_released();
 
         assert_eq!(overlay.history.len(), 2);
 
         overlay.on_key_pressed(Keysym::u);
         assert_eq!(overlay.history.len(), 1);
-        assert_eq!(overlay.buf, buf_after_first);
+        assert_eq!(overlay.canvas.buf, buf_after_first);
 
         overlay.on_key_pressed(Keysym::u);
         assert!(overlay.history.is_empty());
-        assert!(overlay.buf.iter().all(|&b| b == 0));
+        assert!(overlay.canvas.buf.iter().all(|&b| b == 0));
     }
 
     #[test]
     fn begin_stroke_starts_current_stroke() {
-        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
         overlay.primary_tool = Tool::Pen(GREEN);
-        let mut ptr = PointerState::new();
 
-        overlay.on_pointer_button_pressed(&ptr, false);
-        overlay.begin_stroke(&mut ptr, Point { x: 15.0, y: 25.0 });
+        overlay.on_pointer_button_pressed(false);
+        overlay.begin_stroke(Point { x: 15.0, y: 25.0 });
 
-        let stroke = ptr
+        let stroke = overlay
             .current_stroke
-            .as_ref()
             .expect("stroke should be in progress");
         assert_eq!(stroke.points.len(), 1);
         assert_eq!(stroke.points[0].x, 15.0);
@@ -1010,17 +862,15 @@ mod tests {
 
     #[test]
     fn on_pointer_motion_appends_to_current_stroke() {
-        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
         overlay.primary_tool = Tool::Pen(RED);
-        let mut ptr = PointerState::new();
 
-        overlay.on_pointer_button_pressed(&ptr, false);
-        overlay.begin_stroke(&mut ptr, Point { x: 5.0, y: 5.0 });
-        overlay.on_pointer_motion(&mut ptr, Point { x: 15.0, y: 15.0 });
+        overlay.on_pointer_button_pressed(false);
+        overlay.begin_stroke(Point { x: 5.0, y: 5.0 });
+        overlay.on_pointer_motion(Point { x: 15.0, y: 15.0 });
 
-        let stroke = ptr
+        let stroke = overlay
             .current_stroke
-            .as_ref()
             .expect("stroke should be in progress");
         assert_eq!(stroke.points.len(), 2);
         assert_eq!(stroke.points[1].x, 15.0);
@@ -1029,82 +879,79 @@ mod tests {
 
     #[test]
     fn end_stroke_finalizes_stroke() {
-        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
         overlay.primary_tool = Tool::Pen(RED);
-        let mut ptr = PointerState::new();
 
-        overlay.on_pointer_button_pressed(&ptr, false);
-        overlay.begin_stroke(&mut ptr, Point { x: 5.0, y: 5.0 });
-        overlay.on_pointer_motion(&mut ptr, Point { x: 15.0, y: 15.0 });
-        overlay.end_stroke(&mut ptr);
+        overlay.on_pointer_button_pressed(false);
+        overlay.begin_stroke(Point { x: 5.0, y: 5.0 });
+        overlay.on_pointer_motion(Point { x: 15.0, y: 15.0 });
+        overlay.end_stroke();
         overlay.on_pointer_button_released();
 
-        assert!(ptr.current_stroke.is_none());
+        assert!(overlay.current_stroke.is_none());
         assert_eq!(overlay.history.len(), 1);
     }
 
     #[test]
     fn on_size_changed_clears_history() {
-        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
         overlay.primary_tool = Tool::Pen(RED);
-        let mut ptr = PointerState::new();
 
-        overlay.on_pointer_button_pressed(&ptr, false);
-        overlay.begin_stroke(&mut ptr, Point { x: 10.0, y: 10.0 });
-        overlay.on_pointer_motion(&mut ptr, Point { x: 20.0, y: 10.0 });
-        overlay.end_stroke(&mut ptr);
+        overlay.on_pointer_button_pressed(false);
+        overlay.begin_stroke(Point { x: 10.0, y: 10.0 });
+        overlay.on_pointer_motion(Point { x: 20.0, y: 10.0 });
+        overlay.end_stroke();
         overlay.on_pointer_button_released();
 
         assert_eq!(overlay.history.len(), 1);
 
-        overlay.on_size_changed();
+        overlay.resize(TEST_WIDTH, TEST_HEIGHT);
 
         assert!(overlay.history.is_empty());
     }
 
     #[test]
     fn on_key_pressed_period_fills_black_background() {
-        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
 
         let (keep, redraw, _) = overlay.on_key_pressed(Keysym::period);
         assert!(keep);
         assert!(redraw);
         assert_eq!(overlay.history.len(), 1);
-        assert_eq!(pixel_at(&overlay.buf, TEST_WIDTH, 0, 0), BLACK);
-        assert_eq!(pixel_at(&overlay.buf, TEST_WIDTH, 50, 40), BLACK);
+        assert_eq!(pixel_at(&overlay.canvas.buf, TEST_WIDTH, 0, 0), BLACK);
+        assert_eq!(pixel_at(&overlay.canvas.buf, TEST_WIDTH, 50, 40), BLACK);
     }
 
     #[test]
     fn on_key_pressed_comma_fills_white_background() {
-        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
 
         let (keep, redraw, _) = overlay.on_key_pressed(Keysym::comma);
         assert!(keep);
         assert!(redraw);
         assert_eq!(overlay.history.len(), 1);
-        assert_eq!(pixel_at(&overlay.buf, TEST_WIDTH, 0, 0), WHITE);
-        assert_eq!(pixel_at(&overlay.buf, TEST_WIDTH, 50, 40), WHITE);
+        assert_eq!(pixel_at(&overlay.canvas.buf, TEST_WIDTH, 0, 0), WHITE);
+        assert_eq!(pixel_at(&overlay.canvas.buf, TEST_WIDTH, 50, 40), WHITE);
     }
 
     #[test]
     fn fill_background_then_undo_restores_previous() {
-        let mut overlay = MockOverlay::new(TEST_WIDTH, TEST_HEIGHT);
+        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
         overlay.primary_tool = Tool::Pen(RED);
-        let mut ptr = PointerState::new();
 
-        overlay.on_pointer_button_pressed(&ptr, false);
-        overlay.begin_stroke(&mut ptr, Point { x: 10.0, y: 10.0 });
-        overlay.on_pointer_motion(&mut ptr, Point { x: 20.0, y: 10.0 });
-        overlay.end_stroke(&mut ptr);
-        let buf_after_draw: Vec<u8> = overlay.buf.clone();
+        overlay.on_pointer_button_pressed(false);
+        overlay.begin_stroke(Point { x: 10.0, y: 10.0 });
+        overlay.on_pointer_motion(Point { x: 20.0, y: 10.0 });
+        overlay.end_stroke();
+        let buf_after_draw: Vec<u8> = overlay.canvas.buf.clone();
 
         overlay.on_key_pressed(Keysym::period);
-        assert_eq!(pixel_at(&overlay.buf, TEST_WIDTH, 0, 0), BLACK);
+        assert_eq!(pixel_at(&overlay.canvas.buf, TEST_WIDTH, 0, 0), BLACK);
 
         let (keep, redraw, _) = overlay.on_key_pressed(Keysym::u);
         assert!(keep);
         assert!(redraw);
-        assert_eq!(overlay.buf, buf_after_draw);
+        assert_eq!(overlay.canvas.buf, buf_after_draw);
     }
 
     #[test]

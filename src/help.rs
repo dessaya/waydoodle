@@ -132,15 +132,6 @@ mod tests {
     use super::*;
     use crate::canvas::Canvas;
 
-    fn make_canvas(buf: &mut Vec<u8>, w: u32, h: u32) -> Canvas<'_> {
-        buf.resize((w * h * 4) as usize, 0);
-        Canvas {
-            buf,
-            width: w,
-            height: h,
-        }
-    }
-
     fn pixel_at(buf: &[u8], w: u32, x: u32, y: u32) -> [u8; 4] {
         let off = (y as usize * w as usize + x as usize) * 4;
         [buf[off], buf[off + 1], buf[off + 2], buf[off + 3]]
@@ -150,8 +141,7 @@ mod tests {
     fn render_help_returns_valid_centered_damage_rect() {
         let w = 800;
         let h = 600;
-        let mut buf = Vec::new();
-        let mut canvas = make_canvas(&mut buf, w, h);
+        let mut canvas = Canvas::new(w, h);
 
         let damage = render_help(&mut canvas);
 
@@ -190,8 +180,7 @@ mod tests {
     fn render_help_draws_panel_background_pixels() {
         let w = 800;
         let h = 600;
-        let mut buf = Vec::new();
-        let mut canvas = make_canvas(&mut buf, w, h);
+        let mut canvas = Canvas::new(w, h);
 
         let damage = render_help(&mut canvas);
 
@@ -199,7 +188,7 @@ mod tests {
         // (it should have the panel background or text drawn on it).
         let cx = (damage.x + damage.width / 2) as u32;
         let cy = (damage.y + damage.height / 2) as u32;
-        let center = pixel_at(&buf, w, cx, cy);
+        let center = pixel_at(&canvas.buf, w, cx, cy);
         assert_ne!(
             center,
             [0, 0, 0, 0],
@@ -207,7 +196,7 @@ mod tests {
         );
 
         // A pixel well outside the panel should still be transparent.
-        assert_eq!(pixel_at(&buf, w, 0, 0), [0, 0, 0, 0]);
+        assert_eq!(pixel_at(&canvas.buf, w, 0, 0), [0, 0, 0, 0]);
     }
 
     #[test]
@@ -215,8 +204,7 @@ mod tests {
         // Canvas smaller than the help panel.
         let w = 50;
         let h = 30;
-        let mut buf = Vec::new();
-        let mut canvas = make_canvas(&mut buf, w, h);
+        let mut canvas = Canvas::new(w, h);
 
         let damage = render_help(&mut canvas);
 
@@ -233,13 +221,12 @@ mod tests {
     fn render_help_has_border_pixels() {
         let w = 800;
         let h = 600;
-        let mut buf = Vec::new();
-        let mut canvas = make_canvas(&mut buf, w, h);
+        let mut canvas = Canvas::new(w, h);
 
         let damage = render_help(&mut canvas);
 
         // The top-left corner of the damage rect should have the border color.
-        let corner = pixel_at(&buf, w, damage.x as u32, damage.y as u32);
+        let corner = pixel_at(&canvas.buf, w, damage.x as u32, damage.y as u32);
         assert_eq!(
             corner, BORDER_COLOR,
             "top-left corner should be the border color"
@@ -248,7 +235,7 @@ mod tests {
         // The bottom-right corner of the panel should also be the border.
         let br_x = (damage.x + damage.width - 1) as u32;
         let br_y = (damage.y + damage.height - 1) as u32;
-        let corner_br = pixel_at(&buf, w, br_x, br_y);
+        let corner_br = pixel_at(&canvas.buf, w, br_x, br_y);
         assert_eq!(
             corner_br, BORDER_COLOR,
             "bottom-right corner should be the border color"
