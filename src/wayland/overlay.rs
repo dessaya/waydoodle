@@ -207,23 +207,23 @@ impl App {
                 overlay.mark_dirty(&self.queue_handle, Rect::new(width, height));
                 self.overlay = Some(OverlayState::Ready(overlay));
             }
-            Some(OverlayState::Ready(overlay)) => {
-                if width != overlay.width() || height != overlay.height() {
-                    log::debug!(
-                        "Overlay window resized to {}x{} -- recreating SHM buffers",
-                        width,
-                        height
-                    );
-                    let damage = overlay.state.resize(width, height);
-                    let (pool, buffers) =
-                        Self::create_overlay_pool_and_buffers(&self.wayland.shm, width, height);
-                    overlay.pool = pool;
-                    overlay.buffers = buffers;
-                    overlay.stale = [None, None];
-                    overlay.mark_dirty(&self.queue_handle, damage);
-                }
+            Some(OverlayState::Ready(overlay))
+                if width != overlay.width() || height != overlay.height() =>
+            {
+                log::debug!(
+                    "Overlay window resized to {}x{} -- recreating SHM buffers",
+                    width,
+                    height
+                );
+                let damage = overlay.state.resize(width, height);
+                let (pool, buffers) =
+                    Self::create_overlay_pool_and_buffers(&self.wayland.shm, width, height);
+                overlay.pool = pool;
+                overlay.buffers = buffers;
+                overlay.stale = [None, None];
+                overlay.mark_dirty(&self.queue_handle, damage);
             }
-            None => {}
+            _ => {}
         }
     }
 }

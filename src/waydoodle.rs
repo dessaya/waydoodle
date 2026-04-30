@@ -1,12 +1,12 @@
 use smithay_client_toolkit::seat::keyboard::Keysym;
 
-use crate::canvas::{Canvas, Point, Rect};
+use crate::canvas::{Canvas, Color, Point, Rect};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum KeyAction {
     SetTool(Tool),
     Clear,
-    FillBackground([u8; 4]),
+    SetBackground(Color),
     Undo,
     ToggleHelp,
     HideOverlay,
@@ -20,61 +20,48 @@ pub(crate) struct ToolInfo {
 }
 
 impl ToolInfo {
-    pub(crate) fn swatch(&self) -> Option<u32> {
+    pub(crate) fn swatch(&self) -> Option<Color> {
         match self.action {
-            KeyAction::SetTool(Tool::Pen(color)) => Some(u32::from_le_bytes(color)),
-            KeyAction::FillBackground(color) => Some(u32::from_le_bytes(color)),
+            KeyAction::SetTool(Tool::Pen(color)) => Some(color),
+            KeyAction::SetBackground(color) => Some(color),
             _ => None,
         }
     }
 }
 
-const fn argb(r: u8, g: u8, b: u8) -> [u8; 4] {
-    u32::from_be_bytes([255, r, g, b]).to_ne_bytes()
-}
-
-const RED: [u8; 4] = argb(255, 0, 0);
-const GREEN: [u8; 4] = argb(0, 255, 0);
-const BLUE: [u8; 4] = argb(0, 0, 255);
-const YELLOW: [u8; 4] = argb(255, 255, 0);
-const MAGENTA: [u8; 4] = argb(255, 0, 255);
-const CYAN: [u8; 4] = argb(0, 255, 255);
-const BLACK: [u8; 4] = argb(0, 0, 0);
-const WHITE: [u8; 4] = argb(255, 255, 255);
-
 pub(crate) const ALL_KEYS: &[ToolInfo] = &[
     ToolInfo {
-        action: KeyAction::SetTool(Tool::Pen(RED)),
+        action: KeyAction::SetTool(Tool::Pen(Color::RED)),
         keysym: Keysym::r,
         key_label: "R",
         desc: "Red pen",
     },
     ToolInfo {
-        action: KeyAction::SetTool(Tool::Pen(GREEN)),
+        action: KeyAction::SetTool(Tool::Pen(Color::GREEN)),
         keysym: Keysym::g,
         key_label: "G",
         desc: "Green pen",
     },
     ToolInfo {
-        action: KeyAction::SetTool(Tool::Pen(BLUE)),
+        action: KeyAction::SetTool(Tool::Pen(Color::BLUE)),
         keysym: Keysym::b,
         key_label: "B",
         desc: "Blue pen",
     },
     ToolInfo {
-        action: KeyAction::SetTool(Tool::Pen(YELLOW)),
+        action: KeyAction::SetTool(Tool::Pen(Color::YELLOW)),
         keysym: Keysym::y,
         key_label: "Y",
         desc: "Yellow pen",
     },
     ToolInfo {
-        action: KeyAction::SetTool(Tool::Pen(MAGENTA)),
+        action: KeyAction::SetTool(Tool::Pen(Color::MAGENTA)),
         keysym: Keysym::m,
         key_label: "M",
         desc: "Magenta pen",
     },
     ToolInfo {
-        action: KeyAction::SetTool(Tool::Pen(CYAN)),
+        action: KeyAction::SetTool(Tool::Pen(Color::CYAN)),
         keysym: Keysym::n,
         key_label: "N",
         desc: "Cyan pen",
@@ -92,16 +79,22 @@ pub(crate) const ALL_KEYS: &[ToolInfo] = &[
         desc: "Clear screen",
     },
     ToolInfo {
-        action: KeyAction::FillBackground(BLACK),
+        action: KeyAction::SetBackground(Color::BLACK),
         keysym: Keysym::period,
         key_label: ".",
         desc: "Black background",
     },
     ToolInfo {
-        action: KeyAction::FillBackground(WHITE),
+        action: KeyAction::SetBackground(Color::WHITE),
         keysym: Keysym::comma,
         key_label: ",",
         desc: "White background",
+    },
+    ToolInfo {
+        action: KeyAction::SetBackground(Color::TRANSPARENT),
+        keysym: Keysym::slash,
+        key_label: "/",
+        desc: "Transparent background",
     },
     ToolInfo {
         action: KeyAction::Undo,
@@ -125,13 +118,13 @@ pub(crate) const ALL_KEYS: &[ToolInfo] = &[
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Tool {
-    Pen([u8; 4]),
+    Pen(Color),
     Eraser,
 }
 
 impl Default for Tool {
     fn default() -> Self {
-        Tool::Pen(RED)
+        Tool::Pen(Color::RED)
     }
 }
 
@@ -143,10 +136,10 @@ impl Tool {
         }
     }
 
-    pub(crate) fn pixel_color(self) -> [u8; 4] {
+    pub(crate) fn pixel_color(self, background_color: Color) -> Color {
         match self {
             Tool::Pen(color) => color,
-            Tool::Eraser => [0, 0, 0, 0],
+            Tool::Eraser => background_color,
         }
     }
 
@@ -165,20 +158,21 @@ pub(crate) enum CursorShape {
 }
 
 pub(crate) struct Stroke {
-    pub tool: Tool,
+    pub color: Color,
+    pub brush_radius: f64,
     pub points: Vec<Point>,
 }
 
 pub(crate) enum HistoryItem {
     Stroke(Stroke),
     Clear,
-    FillBackground([u8; 4]),
+    SetBackground(Color),
 }
 
 pub(crate) struct OverlayState {
     pub canvas: Canvas,
-
     pub current_stroke: Option<Stroke>,
+    pub background_color: Color,
     pub primary_tool: Tool,
     pub override_tool: Option<Tool>,
     pub show_help: bool,
@@ -190,6 +184,7 @@ impl OverlayState {
         Self {
             canvas: Canvas::new(width, height),
             current_stroke: None,
+            background_color: Color::TRANSPARENT,
             primary_tool: Tool::default(),
             override_tool: None,
             show_help: false,
@@ -216,10 +211,15 @@ impl OverlayState {
                 self.history.push(HistoryItem::Clear);
                 (true, true)
             }
-            KeyAction::FillBackground(color) => {
-                self.canvas.fill(color);
-                self.history.push(HistoryItem::FillBackground(color));
-                (true, true)
+            KeyAction::SetBackground(color) => {
+                if self.background_color != color {
+                    self.history.push(HistoryItem::SetBackground(color));
+                    self.background_color = color;
+                    self.canvas.fill(self.background_color);
+                    (true, true)
+                } else {
+                    (true, false)
+                }
             }
             KeyAction::Undo => {
                 if self.history.pop().is_some() {
@@ -243,20 +243,24 @@ impl OverlayState {
         for item in self.history.iter() {
             match item {
                 HistoryItem::Stroke(stroke) => {
-                    let radius = stroke.tool.brush_radius();
-                    let pixel = stroke.tool.pixel_color();
                     if let Some(first) = stroke.points.first() {
-                        self.canvas.draw_circle(*first, radius, pixel);
+                        self.canvas
+                            .draw_circle(*first, stroke.brush_radius, stroke.color);
                         for pair in stroke.points.windows(2) {
-                            self.canvas.draw_line(pair[0], pair[1], radius, pixel);
+                            self.canvas.draw_line(
+                                pair[0],
+                                pair[1],
+                                stroke.brush_radius,
+                                stroke.color,
+                            );
                         }
                     }
                 }
                 HistoryItem::Clear => {
                     self.canvas.clear();
                 }
-                HistoryItem::FillBackground(color) => {
-                    self.canvas.fill(*color);
+                HistoryItem::SetBackground(to) => {
+                    self.canvas.fill(*to);
                 }
             }
         }
@@ -292,13 +296,14 @@ impl OverlayState {
             return Rect::zero();
         };
         let tool = self.current_tool();
-        let radius = tool.brush_radius();
-        let pixel = tool.pixel_color();
+        let brush_radius = tool.brush_radius();
+        let color = tool.pixel_color(self.background_color);
         self.current_stroke = Some(Stroke {
-            tool,
+            color,
+            brush_radius,
             points: vec![pos],
         });
-        self.canvas.draw_circle(pos, radius, pixel)
+        self.canvas.draw_circle(pos, brush_radius, color)
     }
 
     pub fn end_stroke(&mut self) {
@@ -311,11 +316,11 @@ impl OverlayState {
     pub fn on_pointer_motion(&mut self, pos: Point) -> Option<Rect> {
         let mut stroke = self.current_stroke.take()?;
         let prev = *stroke.points.last()?;
-        let radius = stroke.tool.brush_radius();
-        let pixel = stroke.tool.pixel_color();
         stroke.points.push(pos);
+        let brush_radius = stroke.brush_radius;
+        let color = stroke.color;
         self.current_stroke = Some(stroke);
-        Some(self.canvas.draw_line(prev, pos, radius, pixel))
+        Some(self.canvas.draw_line(prev, pos, brush_radius, color))
     }
 
     pub fn resize(&mut self, width: u32, height: u32) -> Rect {
@@ -396,19 +401,9 @@ mod tests {
         }
     }
 
-    fn pixel_at(buf: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
-        let offset = (y as usize * width as usize + x as usize) * 4;
-        [
-            buf[offset],
-            buf[offset + 1],
-            buf[offset + 2],
-            buf[offset + 3],
-        ]
-    }
-
     #[test]
     fn pen_brush_radius_is_1_5() {
-        assert_eq!(Tool::Pen(RED).brush_radius(), 1.5);
+        assert_eq!(Tool::Pen(Color::RED).brush_radius(), 1.5);
     }
 
     #[test]
@@ -418,7 +413,7 @@ mod tests {
 
     #[test]
     fn pen_cursor_shape_is_crosshair() {
-        assert_eq!(Tool::Pen(RED).cursor_shape(), CursorShape::Crosshair);
+        assert_eq!(Tool::Pen(Color::RED).cursor_shape(), CursorShape::Crosshair);
     }
 
     #[test]
@@ -428,26 +423,32 @@ mod tests {
 
     #[test]
     fn pen_pixel_color_returns_its_color() {
-        assert_eq!(Tool::Pen(RED).pixel_color(), RED);
-        assert_eq!(Tool::Pen(BLUE).pixel_color(), BLUE);
-        assert_eq!(Tool::Pen(GREEN).pixel_color(), GREEN);
+        assert_eq!(Tool::Pen(Color::RED).pixel_color(Color::BLACK), Color::RED);
+        assert_eq!(
+            Tool::Pen(Color::BLUE).pixel_color(Color::BLACK),
+            Color::BLUE
+        );
+        assert_eq!(
+            Tool::Pen(Color::GREEN).pixel_color(Color::BLACK),
+            Color::GREEN
+        );
     }
 
     #[test]
     fn eraser_pixel_color_returns_transparent() {
-        assert_eq!(Tool::Eraser.pixel_color(), [0, 0, 0, 0]);
+        assert_eq!(Tool::Eraser.pixel_color(Color::BLACK), Color::BLACK);
     }
 
     #[test]
     fn default_tool_is_red_pen() {
-        assert_eq!(Tool::default(), Tool::Pen(RED));
+        assert_eq!(Tool::default(), Tool::Pen(Color::RED));
     }
 
     #[test]
     fn swatch_returns_some_for_pen_entries() {
         for info in ALL_KEYS {
             if let KeyAction::SetTool(Tool::Pen(color)) = info.action {
-                assert_eq!(info.swatch(), Some(u32::from_le_bytes(color)));
+                assert_eq!(info.swatch(), Some(color));
             }
         }
     }
@@ -456,7 +457,7 @@ mod tests {
     fn swatch_returns_none_for_non_pen_entries() {
         for info in ALL_KEYS {
             match info.action {
-                KeyAction::SetTool(Tool::Pen(_)) | KeyAction::FillBackground(_) => {}
+                KeyAction::SetTool(Tool::Pen(_)) | KeyAction::SetBackground(_) => {}
                 _ => {
                     assert_eq!(info.swatch(), None);
                 }
@@ -477,6 +478,7 @@ mod tests {
             Keysym::c,
             Keysym::period,
             Keysym::comma,
+            Keysym::slash,
             Keysym::u,
             Keysym::Escape,
             Keysym::F1,
@@ -494,16 +496,17 @@ mod tests {
     #[test]
     fn all_keys_maps_keysym_to_correct_action() {
         let cases: &[(Keysym, KeyAction)] = &[
-            (Keysym::r, KeyAction::SetTool(Tool::Pen(RED))),
-            (Keysym::g, KeyAction::SetTool(Tool::Pen(GREEN))),
-            (Keysym::b, KeyAction::SetTool(Tool::Pen(BLUE))),
-            (Keysym::y, KeyAction::SetTool(Tool::Pen(YELLOW))),
-            (Keysym::m, KeyAction::SetTool(Tool::Pen(MAGENTA))),
-            (Keysym::n, KeyAction::SetTool(Tool::Pen(CYAN))),
+            (Keysym::r, KeyAction::SetTool(Tool::Pen(Color::RED))),
+            (Keysym::g, KeyAction::SetTool(Tool::Pen(Color::GREEN))),
+            (Keysym::b, KeyAction::SetTool(Tool::Pen(Color::BLUE))),
+            (Keysym::y, KeyAction::SetTool(Tool::Pen(Color::YELLOW))),
+            (Keysym::m, KeyAction::SetTool(Tool::Pen(Color::MAGENTA))),
+            (Keysym::n, KeyAction::SetTool(Tool::Pen(Color::CYAN))),
             (Keysym::e, KeyAction::SetTool(Tool::Eraser)),
             (Keysym::c, KeyAction::Clear),
-            (Keysym::period, KeyAction::FillBackground(BLACK)),
-            (Keysym::comma, KeyAction::FillBackground(WHITE)),
+            (Keysym::period, KeyAction::SetBackground(Color::BLACK)),
+            (Keysym::comma, KeyAction::SetBackground(Color::WHITE)),
+            (Keysym::slash, KeyAction::SetBackground(Color::TRANSPARENT)),
             (Keysym::u, KeyAction::Undo),
             (Keysym::Escape, KeyAction::HideOverlay),
             (Keysym::F1, KeyAction::ToggleHelp),
@@ -526,7 +529,7 @@ mod tests {
         assert!(keep);
         assert!(!redraw);
         assert_eq!(shape, CursorShape::Crosshair);
-        assert_eq!(overlay.primary_tool, Tool::Pen(RED));
+        assert_eq!(overlay.primary_tool, Tool::Pen(Color::RED));
     }
 
     #[test]
@@ -542,8 +545,8 @@ mod tests {
     #[test]
     fn on_key_pressed_c_clears_canvas() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
-        overlay.canvas.buf[0..4].copy_from_slice(&RED);
-        overlay.canvas.buf[100..104].copy_from_slice(&BLUE);
+        overlay.canvas.buf[0..4].copy_from_slice(&Color::RED.argb_le());
+        overlay.canvas.buf[100..104].copy_from_slice(&Color::BLUE.argb_le());
 
         let (keep, redraw, shape) = overlay.on_key_pressed(Keysym::c);
         assert!(keep);
@@ -587,7 +590,7 @@ mod tests {
     #[test]
     fn on_pointer_motion_with_pen_draws_pixels() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
-        overlay.primary_tool = Tool::Pen(RED);
+        overlay.primary_tool = Tool::Pen(Color::RED);
         overlay.on_pointer_button_pressed(false);
         overlay.begin_stroke(Point { x: 10.0, y: 10.0 });
 
@@ -599,7 +602,7 @@ mod tests {
 
         let mut found_red = false;
         for x in 10..=20 {
-            if pixel_at(&overlay.canvas.buf, TEST_WIDTH, x, 10) == RED {
+            if overlay.canvas.pixel_at(x, 10) == Color::RED {
                 found_red = true;
                 break;
             }
@@ -618,7 +621,7 @@ mod tests {
     #[test]
     fn on_pointer_motion_with_eraser_clears_pixels() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
-        overlay.primary_tool = Tool::Pen(RED);
+        overlay.primary_tool = Tool::Pen(Color::RED);
         overlay.on_pointer_button_pressed(false);
         overlay.begin_stroke(Point { x: 10.0, y: 30.0 });
         overlay.on_pointer_motion(Point { x: 30.0, y: 30.0 });
@@ -634,14 +637,14 @@ mod tests {
         assert!(damage.width > 0);
         assert!(damage.height > 0);
 
-        let center_pixel = pixel_at(&overlay.canvas.buf, TEST_WIDTH, 20, 30);
-        assert_eq!(center_pixel, [0, 0, 0, 0]);
+        let center_pixel = overlay.canvas.pixel_at(20, 30);
+        assert_eq!(center_pixel, Color::TRANSPARENT);
     }
 
     #[test]
     fn right_mouse_button_uses_eraser_tool() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
-        overlay.primary_tool = Tool::Pen(RED);
+        overlay.primary_tool = Tool::Pen(Color::RED);
         overlay.on_pointer_button_pressed(false);
         overlay.begin_stroke(Point { x: 10.0, y: 30.0 });
         overlay.on_pointer_motion(Point { x: 30.0, y: 30.0 });
@@ -658,14 +661,14 @@ mod tests {
         assert!(damage.width > 0);
         assert!(damage.height > 0);
 
-        let center_pixel = pixel_at(&overlay.canvas.buf, TEST_WIDTH, 20, 30);
-        assert_eq!(center_pixel, [0, 0, 0, 0]);
+        let center_pixel = overlay.canvas.pixel_at(20, 30);
+        assert_eq!(center_pixel, Color::TRANSPARENT);
     }
 
     #[test]
     fn begin_stroke_draws_circle_at_point() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
-        overlay.primary_tool = Tool::Pen(GREEN);
+        overlay.primary_tool = Tool::Pen(Color::GREEN);
 
         overlay.on_pointer_button_pressed(false);
         let damage = overlay.begin_stroke(Point { x: 32.0, y: 32.0 });
@@ -673,8 +676,8 @@ mod tests {
         assert!(damage.width > 0);
         assert!(damage.height > 0);
 
-        let p = pixel_at(&overlay.canvas.buf, TEST_WIDTH, 32, 32);
-        assert_eq!(p, GREEN);
+        let p = overlay.canvas.pixel_at(32, 32);
+        assert_eq!(p, Color::GREEN);
     }
 
     #[test]
@@ -701,7 +704,7 @@ mod tests {
     #[test]
     fn on_size_changed_clears_canvas_and_returns_full_rect() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
-        overlay.canvas.buf[0..4].copy_from_slice(&RED);
+        overlay.canvas.buf[0..4].copy_from_slice(&Color::RED.argb_le());
 
         let rect = overlay.resize(TEST_WIDTH, TEST_HEIGHT);
         assert_eq!(rect.x, 0);
@@ -763,7 +766,7 @@ mod tests {
     #[test]
     fn on_key_pressed_u_undoes_last_stroke() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
-        overlay.primary_tool = Tool::Pen(RED);
+        overlay.primary_tool = Tool::Pen(Color::RED);
         overlay.on_pointer_button_pressed(false);
         overlay.begin_stroke(Point { x: 10.0, y: 10.0 });
         overlay.on_pointer_motion(Point { x: 20.0, y: 10.0 });
@@ -793,7 +796,7 @@ mod tests {
     #[test]
     fn on_key_pressed_c_then_u_restores_drawing() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
-        overlay.primary_tool = Tool::Pen(RED);
+        overlay.primary_tool = Tool::Pen(Color::RED);
         overlay.on_pointer_button_pressed(false);
         overlay.begin_stroke(Point { x: 10.0, y: 10.0 });
         overlay.on_pointer_motion(Point { x: 20.0, y: 10.0 });
@@ -818,7 +821,7 @@ mod tests {
     fn multiple_strokes_undo_in_order() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
 
-        overlay.primary_tool = Tool::Pen(RED);
+        overlay.primary_tool = Tool::Pen(Color::RED);
         overlay.on_pointer_button_pressed(false);
         overlay.begin_stroke(Point { x: 10.0, y: 10.0 });
         overlay.on_pointer_motion(Point { x: 20.0, y: 10.0 });
@@ -826,7 +829,7 @@ mod tests {
         overlay.on_pointer_button_released();
         let buf_after_first: Vec<u8> = overlay.canvas.buf.clone();
 
-        overlay.primary_tool = Tool::Pen(BLUE);
+        overlay.primary_tool = Tool::Pen(Color::BLUE);
         overlay.on_pointer_button_pressed(false);
         overlay.begin_stroke(Point { x: 10.0, y: 50.0 });
         overlay.on_pointer_motion(Point { x: 20.0, y: 50.0 });
@@ -847,7 +850,7 @@ mod tests {
     #[test]
     fn begin_stroke_starts_current_stroke() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
-        overlay.primary_tool = Tool::Pen(GREEN);
+        overlay.primary_tool = Tool::Pen(Color::GREEN);
 
         overlay.on_pointer_button_pressed(false);
         overlay.begin_stroke(Point { x: 15.0, y: 25.0 });
@@ -863,7 +866,7 @@ mod tests {
     #[test]
     fn on_pointer_motion_appends_to_current_stroke() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
-        overlay.primary_tool = Tool::Pen(RED);
+        overlay.primary_tool = Tool::Pen(Color::RED);
 
         overlay.on_pointer_button_pressed(false);
         overlay.begin_stroke(Point { x: 5.0, y: 5.0 });
@@ -880,7 +883,7 @@ mod tests {
     #[test]
     fn end_stroke_finalizes_stroke() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
-        overlay.primary_tool = Tool::Pen(RED);
+        overlay.primary_tool = Tool::Pen(Color::RED);
 
         overlay.on_pointer_button_pressed(false);
         overlay.begin_stroke(Point { x: 5.0, y: 5.0 });
@@ -895,7 +898,7 @@ mod tests {
     #[test]
     fn on_size_changed_clears_history() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
-        overlay.primary_tool = Tool::Pen(RED);
+        overlay.primary_tool = Tool::Pen(Color::RED);
 
         overlay.on_pointer_button_pressed(false);
         overlay.begin_stroke(Point { x: 10.0, y: 10.0 });
@@ -918,8 +921,8 @@ mod tests {
         assert!(keep);
         assert!(redraw);
         assert_eq!(overlay.history.len(), 1);
-        assert_eq!(pixel_at(&overlay.canvas.buf, TEST_WIDTH, 0, 0), BLACK);
-        assert_eq!(pixel_at(&overlay.canvas.buf, TEST_WIDTH, 50, 40), BLACK);
+        assert_eq!(overlay.canvas.pixel_at(0, 0), Color::BLACK);
+        assert_eq!(overlay.canvas.pixel_at(50, 40), Color::BLACK);
     }
 
     #[test]
@@ -930,14 +933,14 @@ mod tests {
         assert!(keep);
         assert!(redraw);
         assert_eq!(overlay.history.len(), 1);
-        assert_eq!(pixel_at(&overlay.canvas.buf, TEST_WIDTH, 0, 0), WHITE);
-        assert_eq!(pixel_at(&overlay.canvas.buf, TEST_WIDTH, 50, 40), WHITE);
+        assert_eq!(overlay.canvas.pixel_at(0, 0), Color::WHITE);
+        assert_eq!(overlay.canvas.pixel_at(50, 40), Color::WHITE);
     }
 
     #[test]
     fn fill_background_then_undo_restores_previous() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT);
-        overlay.primary_tool = Tool::Pen(RED);
+        overlay.primary_tool = Tool::Pen(Color::RED);
 
         overlay.on_pointer_button_pressed(false);
         overlay.begin_stroke(Point { x: 10.0, y: 10.0 });
@@ -946,7 +949,7 @@ mod tests {
         let buf_after_draw: Vec<u8> = overlay.canvas.buf.clone();
 
         overlay.on_key_pressed(Keysym::period);
-        assert_eq!(pixel_at(&overlay.canvas.buf, TEST_WIDTH, 0, 0), BLACK);
+        assert_eq!(overlay.canvas.pixel_at(0, 0), Color::BLACK);
 
         let (keep, redraw, _) = overlay.on_key_pressed(Keysym::u);
         assert!(keep);
@@ -957,7 +960,7 @@ mod tests {
     #[test]
     fn swatch_returns_some_for_fill_background_entries() {
         for info in ALL_KEYS {
-            if let KeyAction::FillBackground(_) = info.action {
+            if let KeyAction::SetBackground(_) = info.action {
                 assert!(
                     info.swatch().is_some(),
                     "swatch() should return Some for FillBackground key '{}'",

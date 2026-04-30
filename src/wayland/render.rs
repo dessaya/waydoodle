@@ -32,9 +32,9 @@ impl Overlay {
         [buf_a, buf_b]
     }
 
-    /// Copy rows covered by `rect` from `canvas_buf` into `shm_canvas`.
+    /// Copy rows covered by `rect` from `canvas_buf` into `shm_buf`.
     /// Both slices have identical layout (width × height × 4 bytes, row-major).
-    fn copy_rect(shm_canvas: &mut [u8], canvas_buf: &[u8], width: u32, rect: &Rect) {
+    fn copy_rect(shm_buf: &mut [u8], canvas_buf: &[u8], width: u32, rect: &Rect) {
         let stride = width as usize * 4;
         let w = width as i32;
         let h = (canvas_buf.len() / stride) as i32;
@@ -55,7 +55,7 @@ impl Overlay {
         for y in y0..y1 {
             let row_offset = y * stride;
             let src = &canvas_buf[row_offset + byte_start..row_offset + byte_end];
-            shm_canvas[row_offset + byte_start..row_offset + byte_end].copy_from_slice(src);
+            shm_buf[row_offset + byte_start..row_offset + byte_end].copy_from_slice(src);
         }
     }
 
@@ -75,11 +75,11 @@ impl Overlay {
 
     fn flush_frame(&mut self) {
         // Find a free SHM buffer. Try both; at least one should be available.
-        let (buf_idx, shm_canvas) = {
-            if let Some(shm_canvas) = self.pool.canvas(&self.buffers[0]) {
-                (0, shm_canvas)
-            } else if let Some(shm_canvas) = self.pool.canvas(&self.buffers[1]) {
-                (1, shm_canvas)
+        let (buf_idx, shm_buf) = {
+            if let Some(shm_buf) = self.pool.canvas(&self.buffers[0]) {
+                (0, shm_buf)
+            } else if let Some(shm_buf) = self.pool.canvas(&self.buffers[1]) {
+                (1, shm_buf)
             } else {
                 log::debug!("flush_frame: both SHM buffers held by compositor, deferring");
                 return;
@@ -110,7 +110,7 @@ impl Overlay {
         // Copy only the affected rows from the off-screen canvas into the SHM
         // buffer.
         Self::copy_rect(
-            shm_canvas,
+            shm_buf,
             &self.state.canvas.buf,
             self.state.canvas.width,
             &copy_rect,

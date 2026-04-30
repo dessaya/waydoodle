@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 
 use bdf_reader::Font;
 
-use crate::canvas::{Canvas, GLYPH_H, GLYPH_W, Rect};
+use crate::canvas::{Canvas, Color, GLYPH_H, GLYPH_W, Rect};
 use crate::waydoodle::ALL_KEYS;
 
 const FONT_REGULAR_BDF: &[u8] = include_bytes!("../assets/Tamzen8x16r.bdf");
@@ -18,20 +18,20 @@ static FONT_BOLD: LazyLock<Font> = LazyLock::new(|| {
 
 const LINE_HEIGHT: u32 = GLYPH_H + 4;
 const PADDING: u32 = 20;
-const PANEL_BG: [u8; 4] = (0xFF202020u32).to_le_bytes();
-const TEXT_COLOR_NORMAL: [u8; 4] = (0xFFDDDDDDu32).to_le_bytes();
-const TEXT_COLOR_KEY: [u8; 4] = (0xFFFFCC00u32).to_le_bytes();
-const TITLE_COLOR: [u8; 4] = (0xFFFFFFFFu32).to_le_bytes();
+const PANEL_BG: Color = Color::from_u32(0xFF202020u32);
+const TEXT_COLOR_NORMAL: Color = Color::from_u32(0xFFDDDDDDu32);
+const TEXT_COLOR_KEY: Color = Color::from_u32(0xFFFFCC00u32);
+const TITLE_COLOR: Color = Color::from_u32(0xFFFFFFFFu32);
 
 struct HelpLine {
     key: &'static str,
     desc: &'static str,
-    color: Option<u32>,
+    color: Option<Color>,
 }
 
 const COLOR_BOX_SIZE: u32 = 10;
 const COLOR_BOX_GAP: u32 = GLYPH_W;
-const BORDER_COLOR: [u8; 4] = (0xFF666666u32).to_le_bytes();
+const BORDER_COLOR: Color = Color::from_u32(0xFF666666u32);
 
 const HELP_TITLE: &str = "Waydoodle - Keyboard Shortcuts";
 
@@ -103,16 +103,10 @@ pub(crate) fn render_help(canvas: &mut Canvas) -> Rect {
         );
         let desc_x = text_x + key_col_width as i32 + color_col_width as i32;
 
-        if let Some(argb) = line.color {
+        if let Some(color) = line.color {
             let box_x = text_x + key_col_width as i32;
             let box_y = row_y + GLYPH_H as i32 - COLOR_BOX_SIZE as i32;
-            canvas.draw_rect(
-                box_x,
-                box_y,
-                COLOR_BOX_SIZE,
-                COLOR_BOX_SIZE,
-                argb.to_le_bytes(),
-            );
+            canvas.draw_rect(box_x, box_y, COLOR_BOX_SIZE, COLOR_BOX_SIZE, color);
         }
 
         canvas.draw_text(font_regular, line.desc, desc_x, row_y, TEXT_COLOR_NORMAL);
@@ -131,11 +125,6 @@ pub(crate) fn render_help(canvas: &mut Canvas) -> Rect {
 mod tests {
     use super::*;
     use crate::canvas::Canvas;
-
-    fn pixel_at(buf: &[u8], w: u32, x: u32, y: u32) -> [u8; 4] {
-        let off = (y as usize * w as usize + x as usize) * 4;
-        [buf[off], buf[off + 1], buf[off + 2], buf[off + 3]]
-    }
 
     #[test]
     fn render_help_returns_valid_centered_damage_rect() {
@@ -188,15 +177,15 @@ mod tests {
         // (it should have the panel background or text drawn on it).
         let cx = (damage.x + damage.width / 2) as u32;
         let cy = (damage.y + damage.height / 2) as u32;
-        let center = pixel_at(&canvas.buf, w, cx, cy);
+        let center = canvas.pixel_at(cx, cy);
         assert_ne!(
             center,
-            [0, 0, 0, 0],
+            Color::TRANSPARENT,
             "center of help panel should not be transparent"
         );
 
         // A pixel well outside the panel should still be transparent.
-        assert_eq!(pixel_at(&canvas.buf, w, 0, 0), [0, 0, 0, 0]);
+        assert_eq!(canvas.pixel_at(0, 0), Color::TRANSPARENT);
     }
 
     #[test]
@@ -226,7 +215,7 @@ mod tests {
         let damage = render_help(&mut canvas);
 
         // The top-left corner of the damage rect should have the border color.
-        let corner = pixel_at(&canvas.buf, w, damage.x as u32, damage.y as u32);
+        let corner = canvas.pixel_at(damage.x as u32, damage.y as u32);
         assert_eq!(
             corner, BORDER_COLOR,
             "top-left corner should be the border color"
@@ -235,7 +224,7 @@ mod tests {
         // The bottom-right corner of the panel should also be the border.
         let br_x = (damage.x + damage.width - 1) as u32;
         let br_y = (damage.y + damage.height - 1) as u32;
-        let corner_br = pixel_at(&canvas.buf, w, br_x, br_y);
+        let corner_br = canvas.pixel_at(br_x, br_y);
         assert_eq!(
             corner_br, BORDER_COLOR,
             "bottom-right corner should be the border color"

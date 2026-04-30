@@ -50,6 +50,48 @@ impl Rect {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Color {
+    pub a: u8,
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+}
+
+impl Color {
+    const fn rgb(r: u8, g: u8, b: u8) -> Self {
+        Self { a: 255, r, g, b }
+    }
+
+    pub const RED: Color = Self::rgb(255, 0, 0);
+    pub const GREEN: Color = Self::rgb(0, 255, 0);
+    pub const BLUE: Color = Self::rgb(0, 0, 255);
+    pub const YELLOW: Color = Self::rgb(255, 255, 0);
+    pub const MAGENTA: Color = Self::rgb(255, 0, 255);
+    pub const CYAN: Color = Self::rgb(0, 255, 255);
+    pub const BLACK: Color = Self::rgb(0, 0, 0);
+    pub const WHITE: Color = Self::rgb(255, 255, 255);
+    pub const TRANSPARENT: Color = Self {
+        a: 0,
+        r: 0,
+        g: 0,
+        b: 0,
+    };
+
+    pub fn argb_le(&self) -> [u8; 4] {
+        [self.b, self.g, self.r, self.a]
+    }
+
+    pub(crate) const fn from_u32(argb: u32) -> Color {
+        Color {
+            a: ((argb >> 24) & 0xFF) as u8,
+            r: ((argb >> 16) & 0xFF) as u8,
+            g: ((argb >> 8) & 0xFF) as u8,
+            b: (argb & 0xFF) as u8,
+        }
+    }
+}
+
 pub(crate) struct Canvas {
     pub buf: Vec<u8>,
     pub width: u32,
@@ -62,29 +104,41 @@ impl Canvas {
         Self { buf, width, height }
     }
 
+    #[cfg(test)]
+    pub fn pixel_at(&self, x: u32, y: u32) -> Color {
+        let offset = (y as usize * self.width as usize + x as usize) * 4;
+        Color {
+            b: self.buf[offset],
+            g: self.buf[offset + 1],
+            r: self.buf[offset + 2],
+            a: self.buf[offset + 3],
+        }
+    }
+
     pub fn clear(&mut self) -> Rect {
         self.buf.fill(0);
         Rect::new(self.width, self.height)
     }
 
-    pub fn fill(&mut self, pixel: [u8; 4]) -> Rect {
+    pub fn fill(&mut self, color: Color) -> Rect {
+        let argb = color.argb_le();
         for chunk in self.buf.chunks_exact_mut(4) {
-            chunk.copy_from_slice(&pixel);
+            chunk.copy_from_slice(&argb);
         }
         Rect::new(self.width, self.height)
     }
 
-    fn set_pixel(&mut self, x: i32, y: i32, pixel: [u8; 4]) {
+    fn set_pixel(&mut self, x: i32, y: i32, color: Color) {
         let width = self.width;
         let height = self.height;
         if x < 0 || y < 0 || x >= width as i32 || y >= height as i32 {
             return;
         }
         let offset = (y as usize * width as usize + x as usize) * 4;
-        self.buf[offset..offset + 4].copy_from_slice(&pixel);
+        self.buf[offset..offset + 4].copy_from_slice(&color.argb_le());
     }
 
-    pub fn draw_rect(&mut self, x: i32, y: i32, w: u32, h: u32, pixel: [u8; 4]) -> Rect {
+    pub fn draw_rect(&mut self, x: i32, y: i32, w: u32, h: u32, color: Color) -> Rect {
         let width = self.width;
         let height = self.height;
 
@@ -95,7 +149,7 @@ impl Canvas {
 
         for y in y0..y1 {
             for x in x0..x1 {
-                self.set_pixel(x, y, pixel);
+                self.set_pixel(x, y, color);
             }
         }
 
@@ -111,7 +165,7 @@ impl Canvas {
         }
     }
 
-    pub fn draw_circle(&mut self, center: Point, radius: f64, pixel: [u8; 4]) -> Rect {
+    pub fn draw_circle(&mut self, center: Point, radius: f64, color: Color) -> Rect {
         let width = self.width;
         let height = self.height;
 
@@ -124,7 +178,7 @@ impl Canvas {
                 let dist_sq = (dx as f64 - (center.x - cx_i as f64)).powi(2)
                     + (dy as f64 - (center.y - cy_i as f64)).powi(2);
                 if dist_sq <= r_sq {
-                    self.set_pixel(cx_i + dx, cy_i + dy, pixel);
+                    self.set_pixel(cx_i + dx, cy_i + dy, color);
                 }
             }
         }
@@ -141,14 +195,14 @@ impl Canvas {
         }
     }
 
-    pub fn draw_border(&mut self, x: i32, y: i32, w: u32, h: u32, color: [u8; 4]) {
+    pub fn draw_border(&mut self, x: i32, y: i32, w: u32, h: u32, color: Color) {
         self.draw_rect(x, y, w, 1, color);
         self.draw_rect(x, y + h as i32 - 1, w, 1, color);
         self.draw_rect(x, y, 1, h, color);
         self.draw_rect(x + w as i32 - 1, y, 1, h, color);
     }
 
-    pub fn draw_line(&mut self, from: Point, to: Point, radius: f64, pixel: [u8; 4]) -> Rect {
+    pub fn draw_line(&mut self, from: Point, to: Point, radius: f64, color: Color) -> Rect {
         let width = self.width;
         let height = self.height;
 
@@ -162,7 +216,7 @@ impl Canvas {
                 x: from.x + dx * t,
                 y: from.y + dy * t,
             };
-            self.draw_circle(center, radius, pixel);
+            self.draw_circle(center, radius, color);
         }
 
         let min_x = from.x.min(to.x) - radius;
@@ -181,7 +235,7 @@ impl Canvas {
         }
     }
 
-    pub fn draw_text(&mut self, font: &Font, text: &str, x: i32, y: i32, color: [u8; 4]) {
+    pub fn draw_text(&mut self, font: &Font, text: &str, x: i32, y: i32, color: Color) {
         let font_bb = font.bounding_box();
         let mut cursor_x = x;
         for ch in text.chars() {
@@ -218,15 +272,6 @@ impl Canvas {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn pixel_at(buf: &[u8], w: u32, x: u32, y: u32) -> [u8; 4] {
-        let off = (y as usize * w as usize + x as usize) * 4;
-        [buf[off], buf[off + 1], buf[off + 2], buf[off + 3]]
-    }
-
-    const RED: [u8; 4] = [255, 0, 0, 128];
-    const BLUE: [u8; 4] = [0, 0, 255, 255];
-    const TRANSPARENT: [u8; 4] = [0, 0, 0, 0];
 
     // -------------------------------------------------------
     // Rect::new
@@ -356,8 +401,8 @@ mod tests {
         let mut canvas = Canvas::new(w, h);
 
         // Dirty some pixels first.
-        canvas.set_pixel(3, 4, RED);
-        canvas.set_pixel(0, 0, BLUE);
+        canvas.set_pixel(3, 4, Color::RED);
+        canvas.set_pixel(0, 0, Color::BLUE);
 
         let damage = canvas.clear();
         assert_eq!(damage.x, 0);
@@ -379,16 +424,16 @@ mod tests {
         let h = 8;
         let mut canvas = Canvas::new(w, h);
 
-        let damage = canvas.fill(RED);
+        let damage = canvas.fill(Color::RED);
         assert_eq!(damage.x, 0);
         assert_eq!(damage.y, 0);
         assert_eq!(damage.width, w as i32);
         assert_eq!(damage.height, h as i32);
 
-        // Every pixel must be RED.
+        // Every color must be RED.
         for y in 0..h {
             for x in 0..w {
-                assert_eq!(pixel_at(&canvas.buf, w, x, y), RED);
+                assert_eq!(canvas.pixel_at(x, y), Color::RED);
             }
         }
     }
@@ -400,7 +445,7 @@ mod tests {
     #[test]
     fn set_pixel_ignores_negative_x() {
         let mut canvas = Canvas::new(4, 4);
-        canvas.set_pixel(-1, 0, RED);
+        canvas.set_pixel(-1, 0, Color::RED);
         // Buffer must still be all zeros.
         assert!(canvas.buf.iter().all(|&b| b == 0));
     }
@@ -408,7 +453,7 @@ mod tests {
     #[test]
     fn set_pixel_ignores_negative_y() {
         let mut canvas = Canvas::new(4, 4);
-        canvas.set_pixel(0, -1, RED);
+        canvas.set_pixel(0, -1, Color::RED);
         assert!(canvas.buf.iter().all(|&b| b == 0));
     }
 
@@ -416,7 +461,7 @@ mod tests {
     fn set_pixel_ignores_x_beyond_width() {
         let w = 4;
         let mut canvas = Canvas::new(w, 4);
-        canvas.set_pixel(w as i32, 0, RED);
+        canvas.set_pixel(w as i32, 0, Color::RED);
         assert!(canvas.buf.iter().all(|&b| b == 0));
     }
 
@@ -424,7 +469,7 @@ mod tests {
     fn set_pixel_ignores_y_beyond_height() {
         let h = 4;
         let mut canvas = Canvas::new(4, h);
-        canvas.set_pixel(0, h as i32, RED);
+        canvas.set_pixel(0, h as i32, Color::RED);
         assert!(canvas.buf.iter().all(|&b| b == 0));
     }
 
@@ -432,10 +477,10 @@ mod tests {
     fn set_pixel_valid_writes_correct_bytes() {
         let w = 4;
         let mut canvas = Canvas::new(w, 4);
-        canvas.set_pixel(2, 3, RED);
-        assert_eq!(pixel_at(&canvas.buf, w, 2, 3), RED);
-        // Neighbouring pixel must be untouched.
-        assert_eq!(pixel_at(&canvas.buf, w, 1, 3), TRANSPARENT);
+        canvas.set_pixel(2, 3, Color::RED);
+        assert_eq!(canvas.pixel_at(2, 3), Color::RED);
+        // Neighbouring color must be untouched.
+        assert_eq!(canvas.pixel_at(1, 3), Color::TRANSPARENT);
     }
 
     // -------------------------------------------------------
@@ -448,7 +493,7 @@ mod tests {
         let h = 10;
         let mut canvas = Canvas::new(w, h);
 
-        let damage = canvas.draw_rect(2, 3, 4, 5, RED);
+        let damage = canvas.draw_rect(2, 3, 4, 5, Color::RED);
 
         // Damage rect should match the drawn area.
         assert_eq!(damage.x, 2);
@@ -460,18 +505,18 @@ mod tests {
         for y in 3..8 {
             for x in 2..6 {
                 assert_eq!(
-                    pixel_at(&canvas.buf, w, x, y),
-                    RED,
-                    "pixel ({x}, {y}) should be RED"
+                    canvas.pixel_at(x, y),
+                    Color::RED,
+                    "color ({x}, {y}) should be RED"
                 );
             }
         }
 
-        // A pixel just outside should be transparent.
-        assert_eq!(pixel_at(&canvas.buf, w, 1, 3), TRANSPARENT);
-        assert_eq!(pixel_at(&canvas.buf, w, 6, 3), TRANSPARENT);
-        assert_eq!(pixel_at(&canvas.buf, w, 2, 2), TRANSPARENT);
-        assert_eq!(pixel_at(&canvas.buf, w, 2, 8), TRANSPARENT);
+        // A color just outside should be transparent.
+        assert_eq!(canvas.pixel_at(1, 3), Color::TRANSPARENT);
+        assert_eq!(canvas.pixel_at(6, 3), Color::TRANSPARENT);
+        assert_eq!(canvas.pixel_at(2, 2), Color::TRANSPARENT);
+        assert_eq!(canvas.pixel_at(2, 8), Color::TRANSPARENT);
     }
 
     #[test]
@@ -481,7 +526,7 @@ mod tests {
         let mut canvas = Canvas::new(w, h);
 
         // Rect extends beyond the right and bottom edges.
-        let damage = canvas.draw_rect(8, 7, 5, 6, BLUE);
+        let damage = canvas.draw_rect(8, 7, 5, 6, Color::BLUE);
 
         // Damage should be clipped to canvas bounds.
         assert_eq!(damage.x, 8);
@@ -490,8 +535,8 @@ mod tests {
         assert_eq!(damage.height, 3); // 10 - 7
 
         // Pixels within canvas bounds should be written.
-        assert_eq!(pixel_at(&canvas.buf, w, 8, 7), BLUE);
-        assert_eq!(pixel_at(&canvas.buf, w, 9, 9), BLUE);
+        assert_eq!(canvas.pixel_at(8, 7), Color::BLUE);
+        assert_eq!(canvas.pixel_at(9, 9), Color::BLUE);
     }
 
     #[test]
@@ -500,7 +545,7 @@ mod tests {
         let h = 10;
         let mut canvas = Canvas::new(w, h);
 
-        let damage = canvas.draw_rect(-2, -3, 5, 6, RED);
+        let damage = canvas.draw_rect(-2, -3, 5, 6, Color::RED);
 
         // Damage rect clipped to canvas: starts at (0,0), extends to (3,3).
         assert_eq!(damage.x, 0);
@@ -509,10 +554,10 @@ mod tests {
         assert_eq!(damage.height, 3); // (-3 + 6) = 3
 
         // The visible portion should have RED pixels.
-        assert_eq!(pixel_at(&canvas.buf, w, 0, 0), RED);
-        assert_eq!(pixel_at(&canvas.buf, w, 2, 2), RED);
+        assert_eq!(canvas.pixel_at(0, 0), Color::RED);
+        assert_eq!(canvas.pixel_at(2, 2), Color::RED);
         // Just outside the rect.
-        assert_eq!(pixel_at(&canvas.buf, w, 3, 0), TRANSPARENT);
+        assert_eq!(canvas.pixel_at(3, 0), Color::TRANSPARENT);
     }
 
     #[test]
@@ -521,7 +566,7 @@ mod tests {
         let h = 10;
         let mut canvas = Canvas::new(w, h);
 
-        let damage = canvas.draw_rect(-10, -10, 5, 5, RED);
+        let damage = canvas.draw_rect(-10, -10, 5, 5, Color::RED);
         assert_eq!(damage.width, 0);
         assert_eq!(damage.height, 0);
 
@@ -541,10 +586,10 @@ mod tests {
 
         let center = Point { x: 10.0, y: 10.0 };
         let radius = 5.0;
-        canvas.draw_circle(center, radius, RED);
+        canvas.draw_circle(center, radius, Color::RED);
 
-        // The center pixel must be filled.
-        assert_eq!(pixel_at(&canvas.buf, w, 10, 10), RED);
+        // The center color must be filled.
+        assert_eq!(canvas.pixel_at(10, 10), Color::RED);
     }
 
     #[test]
@@ -555,13 +600,13 @@ mod tests {
 
         let center = Point { x: 15.0, y: 15.0 };
         let radius = 5.0;
-        canvas.draw_circle(center, radius, RED);
+        canvas.draw_circle(center, radius, Color::RED);
 
         // Points along axes at distance < radius should be filled.
-        assert_eq!(pixel_at(&canvas.buf, w, 15, 11), RED); // 4 pixels above center
-        assert_eq!(pixel_at(&canvas.buf, w, 15, 19), RED); // 4 pixels below center
-        assert_eq!(pixel_at(&canvas.buf, w, 11, 15), RED); // 4 pixels left
-        assert_eq!(pixel_at(&canvas.buf, w, 19, 15), RED); // 4 pixels right
+        assert_eq!(canvas.pixel_at(15, 11), Color::RED); // 4 pixels above center
+        assert_eq!(canvas.pixel_at(15, 19), Color::RED); // 4 pixels below center
+        assert_eq!(canvas.pixel_at(11, 15), Color::RED); // 4 pixels left
+        assert_eq!(canvas.pixel_at(19, 15), Color::RED); // 4 pixels right
     }
 
     #[test]
@@ -572,12 +617,12 @@ mod tests {
 
         let center = Point { x: 15.0, y: 15.0 };
         let radius = 5.0;
-        canvas.draw_circle(center, radius, RED);
+        canvas.draw_circle(center, radius, Color::RED);
 
         // Pixels well outside the radius should be untouched.
-        assert_eq!(pixel_at(&canvas.buf, w, 0, 0), TRANSPARENT);
-        assert_eq!(pixel_at(&canvas.buf, w, 15, 0), TRANSPARENT);
-        assert_eq!(pixel_at(&canvas.buf, w, 29, 29), TRANSPARENT);
+        assert_eq!(canvas.pixel_at(0, 0), Color::TRANSPARENT);
+        assert_eq!(canvas.pixel_at(15, 0), Color::TRANSPARENT);
+        assert_eq!(canvas.pixel_at(29, 29), Color::TRANSPARENT);
     }
 
     #[test]
@@ -588,7 +633,7 @@ mod tests {
 
         let center = Point { x: 15.0, y: 15.0 };
         let radius = 5.0;
-        let damage = canvas.draw_circle(center, radius, RED);
+        let damage = canvas.draw_circle(center, radius, Color::RED);
 
         // Damage rect should encompass the circle's bounding box.
         assert!(damage.x <= 10);
@@ -606,15 +651,15 @@ mod tests {
         // Circle centered near the edge — should not panic and damage is clipped.
         let center = Point { x: 1.0, y: 1.0 };
         let radius = 5.0;
-        let damage = canvas.draw_circle(center, radius, BLUE);
+        let damage = canvas.draw_circle(center, radius, Color::BLUE);
 
         assert!(damage.x >= 0);
         assert!(damage.y >= 0);
         assert!(damage.x + damage.width <= w as i32);
         assert!(damage.y + damage.height <= h as i32);
 
-        // Center pixel should still be written.
-        assert_eq!(pixel_at(&canvas.buf, w, 1, 1), BLUE);
+        // Center color should still be written.
+        assert_eq!(canvas.pixel_at(1, 1), Color::BLUE);
     }
 
     // -------------------------------------------------------
@@ -630,14 +675,14 @@ mod tests {
         let from = Point { x: 5.0, y: 5.0 };
         let to = Point { x: 25.0, y: 5.0 };
         let radius = 1.5;
-        canvas.draw_line(from, to, radius, RED);
+        canvas.draw_line(from, to, radius, Color::RED);
 
-        // Every pixel along the horizontal midline between from.x and to.x should be filled.
+        // Every color along the horizontal midline between from.x and to.x should be filled.
         for x in 5..=25 {
             assert_eq!(
-                pixel_at(&canvas.buf, w, x, 5),
-                RED,
-                "pixel ({x}, 5) on line should be RED"
+                canvas.pixel_at(x, 5),
+                Color::RED,
+                "color ({x}, 5) on line should be RED"
             );
         }
     }
@@ -651,13 +696,13 @@ mod tests {
         let from = Point { x: 5.0, y: 3.0 };
         let to = Point { x: 5.0, y: 20.0 };
         let radius = 1.5;
-        canvas.draw_line(from, to, radius, BLUE);
+        canvas.draw_line(from, to, radius, Color::BLUE);
 
         for y in 3..=20 {
             assert_eq!(
-                pixel_at(&canvas.buf, w, 5, y),
-                BLUE,
-                "pixel (5, {y}) on line should be BLUE"
+                canvas.pixel_at(5, y),
+                Color::BLUE,
+                "color (5, {y}) on line should be BLUE"
             );
         }
     }
@@ -671,7 +716,7 @@ mod tests {
         let from = Point { x: 5.0, y: 10.0 };
         let to = Point { x: 30.0, y: 25.0 };
         let radius = 2.0;
-        let damage = canvas.draw_line(from, to, radius, RED);
+        let damage = canvas.draw_line(from, to, radius, Color::RED);
 
         // Damage must contain the full bounding box of the line + radius.
         assert!(damage.x <= 3, "damage.x={} should be <= 3", damage.x);
@@ -696,10 +741,10 @@ mod tests {
 
         let p = Point { x: 10.0, y: 10.0 };
         let radius = 3.0;
-        let damage = canvas.draw_line(p, p, radius, RED);
+        let damage = canvas.draw_line(p, p, radius, Color::RED);
 
         // Should behave like a circle at the point.
-        assert_eq!(pixel_at(&canvas.buf, w, 10, 10), RED);
+        assert_eq!(canvas.pixel_at(10, 10), Color::RED);
         assert!(damage.width > 0);
         assert!(damage.height > 0);
     }
@@ -718,14 +763,14 @@ mod tests {
         let by = 4;
         let bw = 10u32;
         let bh = 8u32;
-        canvas.draw_border(bx, by, bw, bh, RED);
+        canvas.draw_border(bx, by, bw, bh, Color::RED);
 
         // Top edge.
         for x in bx..(bx + bw as i32) {
             assert_eq!(
-                pixel_at(&canvas.buf, w, x as u32, by as u32),
-                RED,
-                "top edge pixel ({x}, {by}) should be RED"
+                canvas.pixel_at(x as u32, by as u32),
+                Color::RED,
+                "top edge color ({x}, {by}) should be RED"
             );
         }
 
@@ -733,18 +778,18 @@ mod tests {
         let bottom_y = by + bh as i32 - 1;
         for x in bx..(bx + bw as i32) {
             assert_eq!(
-                pixel_at(&canvas.buf, w, x as u32, bottom_y as u32),
-                RED,
-                "bottom edge pixel ({x}, {bottom_y}) should be RED"
+                canvas.pixel_at(x as u32, bottom_y as u32),
+                Color::RED,
+                "bottom edge color ({x}, {bottom_y}) should be RED"
             );
         }
 
         // Left edge.
         for y in by..(by + bh as i32) {
             assert_eq!(
-                pixel_at(&canvas.buf, w, bx as u32, y as u32),
-                RED,
-                "left edge pixel ({bx}, {y}) should be RED"
+                canvas.pixel_at(bx as u32, y as u32),
+                Color::RED,
+                "left edge color ({bx}, {y}) should be RED"
             );
         }
 
@@ -752,9 +797,9 @@ mod tests {
         let right_x = bx + bw as i32 - 1;
         for y in by..(by + bh as i32) {
             assert_eq!(
-                pixel_at(&canvas.buf, w, right_x as u32, y as u32),
-                RED,
-                "right edge pixel ({right_x}, {y}) should be RED"
+                canvas.pixel_at(right_x as u32, y as u32),
+                Color::RED,
+                "right edge color ({right_x}, {y}) should be RED"
             );
         }
     }
@@ -769,15 +814,15 @@ mod tests {
         let by = 2;
         let bw = 10u32;
         let bh = 10u32;
-        canvas.draw_border(bx, by, bw, bh, RED);
+        canvas.draw_border(bx, by, bw, bh, Color::RED);
 
-        // Interior pixels (more than 1 pixel away from edges) should remain transparent.
+        // Interior pixels (more than 1 color away from edges) should remain transparent.
         for y in (by + 1)..(by + bh as i32 - 1) {
             for x in (bx + 1)..(bx + bw as i32 - 1) {
                 assert_eq!(
-                    pixel_at(&canvas.buf, w, x as u32, y as u32),
-                    TRANSPARENT,
-                    "interior pixel ({x}, {y}) should be transparent"
+                    canvas.pixel_at(x as u32, y as u32),
+                    Color::TRANSPARENT,
+                    "interior color ({x}, {y}) should be transparent"
                 );
             }
         }
@@ -789,13 +834,13 @@ mod tests {
         let h = 20;
         let mut canvas = Canvas::new(w, h);
 
-        canvas.draw_border(5, 5, 6, 6, RED);
+        canvas.draw_border(5, 5, 6, 6, Color::RED);
 
-        // Pixel just outside each edge.
-        assert_eq!(pixel_at(&canvas.buf, w, 4, 5), TRANSPARENT);
-        assert_eq!(pixel_at(&canvas.buf, w, 11, 5), TRANSPARENT);
-        assert_eq!(pixel_at(&canvas.buf, w, 5, 4), TRANSPARENT);
-        assert_eq!(pixel_at(&canvas.buf, w, 5, 11), TRANSPARENT);
+        // color just outside each edge.
+        assert_eq!(canvas.pixel_at(4, 5), Color::TRANSPARENT);
+        assert_eq!(canvas.pixel_at(11, 5), Color::TRANSPARENT);
+        assert_eq!(canvas.pixel_at(5, 4), Color::TRANSPARENT);
+        assert_eq!(canvas.pixel_at(5, 11), Color::TRANSPARENT);
     }
 
     // -------------------------------------------------------
