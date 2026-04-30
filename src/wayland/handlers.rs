@@ -1,3 +1,4 @@
+use cairo::RectangleInt;
 use smithay_client_toolkit::{
     compositor::CompositorHandler,
     delegate_compositor, delegate_keyboard, delegate_layer, delegate_output, delegate_pointer,
@@ -23,11 +24,7 @@ use wayland_client::{
     protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_surface},
 };
 
-use crate::{
-    canvas::{Point, Rect},
-    waydoodle::App as _,
-    wayland::App,
-};
+use crate::{canvas::Point, waydoodle::App as _, wayland::App};
 
 use super::{OverlayState, PointerState, cursors::TabletCursorState, tablet::TabletState};
 
@@ -295,7 +292,10 @@ impl KeyboardHandler for App {
             return;
         }
         if redraw {
-            overlay.mark_dirty(qh, Rect::new(overlay.width(), overlay.height()));
+            overlay.mark_dirty(
+                qh,
+                RectangleInt::new(0, 0, overlay.width(), overlay.height()),
+            );
         }
         self.apply_cursor(shape);
     }

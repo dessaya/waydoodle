@@ -1,5 +1,5 @@
 mod canvas;
-mod help;
+mod menu;
 mod tray;
 mod waydoodle;
 mod wayland;

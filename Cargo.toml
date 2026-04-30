@@ -18,7 +18,7 @@ log = "0.4"
 env_logger = "0.11"
 calloop = { version = "0.14", features = ["signals"] }
 ksni = { version = "0.3", default-features = false, features = ["blocking", "async-io"] }
-bdf-reader = "0.1"
+cairo-rs = { version = "0.22.0", default-features = false }
 
 [package.metadata.deb]
 depends = "libc6, libwayland-client0"

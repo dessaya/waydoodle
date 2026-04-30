@@ -1,3 +1,4 @@
+use cairo::RectangleInt;
 use smithay_client_toolkit::{
     compositor::Region,
     shell::{
@@ -13,7 +14,6 @@ use smithay_client_toolkit::{
 use wayland_client::protocol::wl_surface::WlSurface;
 
 use crate::{
-    canvas::Rect,
     waydoodle::{self},
     wayland::{App, OverlayState},
 };
@@ -52,9 +52,9 @@ pub(super) struct Overlay {
     /// `canvas_buf`. When we present using one buffer, the *other* buffer
     /// accumulates the damage as stale. Next time we use that buffer we
     /// must copy its stale region in addition to the current frame's damage.
-    pub stale: [Option<Rect>; 2],
+    pub stale: [cairo::Region; 2],
 
-    pub pending_damage: Option<Rect>,
+    pub pending_damage: cairo::Region,
     pub frame_requested: bool,
 
     pub has_focus: bool,
@@ -63,20 +63,20 @@ pub(super) struct Overlay {
 }
 
 impl Overlay {
-    pub fn width(&self) -> u32 {
-        self.state.canvas.width
+    pub fn width(&self) -> i32 {
+        self.state.canvas.width()
     }
 
-    pub fn height(&self) -> u32 {
-        self.state.canvas.height
+    pub fn height(&self) -> i32 {
+        self.state.canvas.height()
     }
 }
 
 impl App {
     pub(super) fn create_overlay_pool_and_buffers(
         shm: &Shm,
-        width: u32,
-        height: u32,
+        width: i32,
+        height: i32,
     ) -> (SlotPool, [Buffer; 2]) {
         log::debug!(
             "Creating SHM slot pool and buffers for overlay ({}x{})",
@@ -186,6 +186,7 @@ impl waydoodle::App<Overlay> for App {
 
 impl App {
     pub(crate) fn on_configure(&mut self, width: u32, height: u32) {
+        let (width, height) = (width as i32, height as i32);
         match &mut self.overlay {
             Some(OverlayState::Pending(_)) => {
                 // Transition Pending → Ready: take the Window out and build the full Overlay.
@@ -198,13 +199,13 @@ impl App {
                     window,
                     pool,
                     buffers,
-                    stale: [None, None],
-                    pending_damage: None,
+                    stale: [cairo::Region::create(), cairo::Region::create()],
+                    pending_damage: cairo::Region::create(),
                     frame_requested: false,
                     has_focus: true,
                     state: waydoodle::OverlayState::new(width, height),
                 };
-                overlay.mark_dirty(&self.queue_handle, Rect::new(width, height));
+                overlay.mark_dirty(&self.queue_handle, RectangleInt::new(0, 0, width, height));
                 self.overlay = Some(OverlayState::Ready(overlay));
             }
             Some(OverlayState::Ready(overlay))
@@ -220,7 +221,7 @@ impl App {
                     Self::create_overlay_pool_and_buffers(&self.wayland.shm, width, height);
                 overlay.pool = pool;
                 overlay.buffers = buffers;
-                overlay.stale = [None, None];
+                overlay.stale = [cairo::Region::create(), cairo::Region::create()];
                 overlay.mark_dirty(&self.queue_handle, damage);
             }
             _ => {}
