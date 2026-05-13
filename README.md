@@ -3,18 +3,16 @@
 A minimalistic Wayland screen annotation tool. Draw on your screen during
 presentations, demos, or video calls — on any Wayland compositor.
 
-Unlike other similar tools like [Gromit-MPX](https://github.com/bk138/gromit-mpx)
-or [Wayscriber](https://wayscriber.com/), Waydoodle provides only the essentials:
+Waydoodle is similar to other tools like
+[Gromit-MPX](https://github.com/bk138/gromit-mpx) or
+[Wayscriber](https://wayscriber.com/), but with a focus on simplicity and ease
+of use. Some of its features include:
 
 - Tray icon with menu
 - Global shortcut (see [below](#global-shortcut))
-- Draw with the mouse or tablet
-- Change color (<kbd>r</kbd>, <kbd>g</kbd>, <kbd>b</kbd>, <kbd>y</kbd>, <kbd>m</kbd>, <kbd>n</kbd>)
-- Erase (<kbd>e</kbd>)
-- Clear (<kbd>c</kbd>)
-- Black/white background (<kbd>.</kbd>, <kbd>,</kbd>)
-- Undo (<kbd>u</kbd>)
-- On-screen help (<kbd>F1</kbd>)
+- Mouse & tablet support
+- Context menu
+- Undo
 
 ## Installation
 
@@ -63,7 +61,9 @@ current drawing):
 pkill -SIGUSR2 waydoodle
 ```
 
-While the overlay is focused:
+While the overlay is focused, just draw with your mouse or tablet.
+
+There is a context menu available on right-click, and the following keyboard shortcuts:
 
 | Key | Action |
 |-----|--------|
@@ -73,12 +73,12 @@ While the overlay is focused:
 | <kbd>y</kbd> | Yellow pen |
 | <kbd>m</kbd> | Magenta pen |
 | <kbd>n</kbd> | Cyan pen |
-| <kbd>e</kbd> | Eraser |
+| <kbd>e</kbd> | Eraser (also with middle mouse button) |
 | <kbd>c</kbd> | Clear all |
 | <kbd>.</kbd> | Black background |
 | <kbd>,</kbd> | White background |
+| <kbd>/</kbd> | Transparent background |
 | <kbd>u</kbd> | Undo |
-| <kbd>F1</kbd> | Toggle help screen |
 | <kbd>Esc</kbd> | Close overlay |
 
 ## Global shortcuts
@@ -97,11 +97,6 @@ pkill -SIGUSR1 waydoodle
 ```
 pkill -SIGUSR2 waydoodle
 ```
-
-## Acknowledgements
-
-Waydoodle uses the [Tamzen](https://github.com/sunaku/tamzen-font) bitmap font
-for on-screen text rendering.
 
 ## License
 

@@ -103,10 +103,12 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for App {
                     .into_result()
                     .is_ok_and(|s| s == ButtonState::Pressed);
                 if let Some(OverlayState::Ready(overlay)) = state.overlay.as_mut() {
-                    let input_btn = if btn == 1 {
-                        InputButton::Secondary
-                    } else {
+                    // from linux/input-event-codes.h
+                    const BTN_STYLUS: u32 = 0x14b;
+                    let input_btn = if btn == BTN_STYLUS {
                         InputButton::Tertiary
+                    } else {
+                        InputButton::Secondary
                     };
                     let (keep_open, redraw, cursor_shape) = if pressed {
                         overlay

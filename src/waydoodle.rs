@@ -129,9 +129,18 @@ impl OverlayState {
                 self.ui
                     .toggle_context_menu(Point { x: 0.0, y: 0.0 })
                     .unwrap();
-                (true, false)
+                (true, true)
             }
-            Op::HideOverlay => (false, false),
+            Op::HideOverlay => {
+                if self.ui.is_context_menu_open() {
+                    self.ui
+                        .toggle_context_menu(Point { x: 0.0, y: 0.0 })
+                        .unwrap();
+                    (true, true)
+                } else {
+                    (false, false)
+                }
+            }
         }
     }
 

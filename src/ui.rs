@@ -185,10 +185,10 @@ impl ContextMenu {
             ctx.save()?;
             ctx.set_source_rgb(0.7, 0.7, 0.7);
             let extents = ctx.text_extents(item.accel_label)?;
-            // justify the key label to the right edge of the menu item
             ctx.translate(x as f64, (total_height as f64 - extents.height()) / 2.0);
+            // justify the accel label to the right edge of the menu item
             ctx.move_to(
-                extents.x_bearing() + (accel_width as f64 - extents.width()),
+                -extents.x_bearing() + (accel_width as f64 - extents.width()),
                 -extents.y_bearing(),
             );
             ctx.show_text(item.accel_label)?;
@@ -228,10 +228,11 @@ impl ContextMenu {
         let total_height = items.iter().map(|item| item.height()).sum::<i32>();
         let draw_above = pos.y as i32 + total_height > screen_height;
 
+        // also shift the menu up by 1 pixel to avoid overlapping the cursor
         let mut start_y = if draw_above {
-            pos.y as i32 - total_height
+            pos.y as i32 - total_height - 1
         } else {
-            pos.y as i32
+            pos.y as i32 + 1
         };
         if start_y < 0 {
             start_y = 0;
@@ -366,19 +367,27 @@ impl UI {
         pos: Point,
         btn: InputButton,
     ) -> Result<(Option<Op>, bool), cairo::Error> {
-        let Some(mut menu) = self.context_menu.take() else {
-            // no menu, so nothing to do
-            return Ok((None, false));
+        let hover = {
+            let Some(menu) = self.context_menu.as_mut() else {
+                // no menu, so nothing to do
+                return Ok((None, false));
+            };
+            menu.update_hover(pos);
+            menu.hover
         };
-        menu.update_hover(pos);
-        self.render()?;
-        if btn == InputButton::Secondary {
-            // menu was open and right-click released, trigger action if hovering over an item
-            Ok((menu.hover.map(|idx| self.actions[idx].op), true))
+        let op = if btn == InputButton::Secondary {
+            // menu is open and right-click released, trigger action if hovering over an item
+            hover.map(|idx| self.actions[idx].op)
         } else {
-            // menu was open but not right-click, just close the menu without triggering an action
-            Ok((None, true))
+            // menu is open but not right-click, just close the menu without triggering an action
+            self.context_menu = None;
+            None
+        };
+        if op.is_some() {
+            self.context_menu = None;
         }
+        self.render()?;
+        Ok((op, true))
     }
 
     pub fn on_pointer_motion(&mut self, pos: Point) -> Result<bool, cairo::Error> {
