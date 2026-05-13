@@ -7,6 +7,7 @@ use wayland_protocols::wp::tablet::zv2::client::{
     zwp_tablet_v2,
 };
 
+use crate::waydoodle::InputButton;
 use crate::{canvas::Point, wayland::App};
 
 use super::{OverlayState, cursors::TabletCursorState};
@@ -87,26 +88,36 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for App {
                 tablet.active_tool = None;
             }
             zwp_tablet_tool_v2::Event::Button {
-                state: btn_state, ..
+                state: btn_state,
+                button: btn,
+                ..
             } => {
-                if state
+                let Some(tablet) = state
                     .tablets
                     .iter_mut()
                     .find(|t| t.active_tool.as_ref().is_some_and(|a| &a.tool == tool))
-                    .is_none()
-                {
+                else {
                     return;
                 };
                 let pressed = btn_state
                     .into_result()
                     .is_ok_and(|s| s == ButtonState::Pressed);
                 if let Some(OverlayState::Ready(overlay)) = state.overlay.as_mut() {
-                    let shape = if pressed {
-                        overlay.state.on_pointer_button_pressed(true)
+                    let input_btn = if btn == 1 {
+                        InputButton::Secondary
                     } else {
-                        overlay.state.on_pointer_button_released()
+                        InputButton::Tertiary
                     };
-                    state.apply_cursor(shape);
+                    let (keep_open, redraw, cursor_shape) = if pressed {
+                        overlay
+                            .state
+                            .on_pointer_button_pressed(tablet.pos, input_btn)
+                    } else {
+                        overlay
+                            .state
+                            .on_pointer_button_released(tablet.pos, input_btn)
+                    };
+                    state.handle_overlay_event_result(keep_open, redraw, cursor_shape);
                 }
             }
             zwp_tablet_tool_v2::Event::Down { .. } => {

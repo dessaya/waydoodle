@@ -1,6 +1,7 @@
+mod actions;
 mod canvas;
-mod menu;
 mod tray;
+mod ui;
 mod waydoodle;
 mod wayland;
 

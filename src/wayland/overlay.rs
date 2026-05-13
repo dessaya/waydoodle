@@ -203,7 +203,8 @@ impl App {
                     pending_damage: cairo::Region::create(),
                     frame_requested: false,
                     has_focus: true,
-                    state: waydoodle::OverlayState::new(width, height),
+                    state: waydoodle::OverlayState::new(width, height)
+                        .expect("Failed to create overlay state"),
                 };
                 overlay.mark_dirty(&self.queue_handle, RectangleInt::new(0, 0, width, height));
                 self.overlay = Some(OverlayState::Ready(overlay));

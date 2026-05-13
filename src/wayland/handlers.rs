@@ -1,4 +1,3 @@
-use cairo::RectangleInt;
 use smithay_client_toolkit::{
     compositor::CompositorHandler,
     delegate_compositor, delegate_keyboard, delegate_layer, delegate_output, delegate_pointer,
@@ -24,7 +23,7 @@ use wayland_client::{
     protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_surface},
 };
 
-use crate::{canvas::Point, waydoodle::App as _, wayland::App};
+use crate::{canvas::Point, waydoodle::InputButton, wayland::App};
 
 use super::{OverlayState, PointerState, cursors::TabletCursorState, tablet::TabletState};
 
@@ -278,7 +277,7 @@ impl KeyboardHandler for App {
     fn press_key(
         &mut self,
         _conn: &Connection,
-        qh: &QueueHandle<Self>,
+        _qh: &QueueHandle<Self>,
         _kbd: &wl_keyboard::WlKeyboard,
         _serial: u32,
         event: KeyEvent,
@@ -287,17 +286,7 @@ impl KeyboardHandler for App {
             return;
         };
         let (keep_open, redraw, shape) = overlay.state.on_key_pressed(event.keysym);
-        if !keep_open {
-            self.destroy_overlay();
-            return;
-        }
-        if redraw {
-            overlay.mark_dirty(
-                qh,
-                RectangleInt::new(0, 0, overlay.width(), overlay.height()),
-            );
-        }
-        self.apply_cursor(shape);
+        self.handle_overlay_event_result(keep_open, redraw, shape);
     }
 
     fn repeat_key(
@@ -404,20 +393,17 @@ impl PointerHandler for App {
                     {
                         continue;
                     };
-                    let is_secondary_button = match button {
-                        BTN_LEFT => false,
-                        BTN_MIDDLE | BTN_RIGHT => true,
-                        _ => continue,
+                    let Some((input_btn, pos)) = input_btn_pos(button, event) else {
+                        continue;
                     };
                     if let Some(OverlayState::Ready(overlay)) = self.overlay.as_mut() {
-                        let shape = overlay.state.on_pointer_button_pressed(is_secondary_button);
-                        let pos = Point {
-                            x: event.position.0,
-                            y: event.position.1,
-                        };
-                        let damage = overlay.state.begin_stroke(pos);
-                        overlay.mark_dirty(qh, damage);
-                        self.apply_cursor(shape);
+                        let (keep_open, redraw, cursor_shape) =
+                            overlay.state.on_pointer_button_pressed(pos, input_btn);
+                        if keep_open && !redraw && input_btn != InputButton::Secondary {
+                            let damage = overlay.state.begin_stroke(pos);
+                            overlay.mark_dirty(qh, damage);
+                        }
+                        self.handle_overlay_event_result(keep_open, redraw, cursor_shape);
                     }
                 }
                 PointerEventKind::Release { button, .. } => {
@@ -429,20 +415,37 @@ impl PointerHandler for App {
                     {
                         continue;
                     };
-                    match button {
-                        BTN_LEFT | BTN_MIDDLE | BTN_RIGHT => (),
-                        _ => continue,
+                    let Some((input_btn, pos)) = input_btn_pos(button, event) else {
+                        continue;
                     };
                     if let Some(OverlayState::Ready(overlay)) = self.overlay.as_mut() {
-                        overlay.state.end_stroke();
-                        let shape = overlay.state.on_pointer_button_released();
-                        self.apply_cursor(shape);
+                        let (keep_open, redraw, cursor_shape) =
+                            overlay.state.on_pointer_button_released(pos, input_btn);
+                        if keep_open && !redraw && input_btn != InputButton::Secondary {
+                            overlay.state.end_stroke();
+                        }
+                        self.handle_overlay_event_result(keep_open, redraw, cursor_shape);
                     }
                 }
                 PointerEventKind::Axis { .. } => {}
             }
         }
     }
+}
+
+fn input_btn_pos(button: u32, event: &PointerEvent) -> Option<(InputButton, Point)> {
+    Some((
+        match button {
+            BTN_LEFT => InputButton::Primary,
+            BTN_RIGHT => InputButton::Secondary,
+            BTN_MIDDLE => InputButton::Tertiary,
+            _ => return None,
+        },
+        Point {
+            x: event.position.0,
+            y: event.position.1,
+        },
+    ))
 }
 
 impl ShmHandler for App {

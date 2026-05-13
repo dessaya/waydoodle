@@ -92,13 +92,24 @@ impl Overlay {
             .union(&damage)
             .expect("Failed to union stale region");
 
+        let width = self.state.canvas.width();
+
         // Copy only the affected rows from the off-screen canvas into the SHM
         // buffer.
-        let width = self.state.canvas.width();
         let data = self.state.canvas.surface_data();
         for i in 0..copy_rect.num_rectangles() {
             let rect = copy_rect.rectangle(i);
             Self::copy_rect(shm_buf, data.deref(), width, &rect);
+        }
+
+        // if the context menu is open, copy its surface into the shm_surface
+        if let Some(menu_rect) = self.state.ui.context_menu_rect() {
+            let surface = self
+                .state
+                .ui
+                .surface_data()
+                .expect("failed to get surface data");
+            Self::copy_rect(shm_buf, surface.deref(), width, &menu_rect);
         }
 
         let surface = self.window.wl_surface();
