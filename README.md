@@ -63,10 +63,9 @@ pkill -SIGUSR2 waydoodle
 
 While the overlay is focused, just draw with your mouse or tablet.
 
-There is a context menu available on right-click, and the following keyboard shortcuts:
-
 | Key | Action |
 |-----|--------|
+| <kbd>Space</kbd>, <kbd>Right Click</kbd> | Toggle context menu |
 | <kbd>r</kbd> | Red pen |
 | <kbd>g</kbd> | Green pen |
 | <kbd>b</kbd> | Blue pen |

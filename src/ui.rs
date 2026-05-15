@@ -320,6 +320,7 @@ impl MenuItem {
 pub struct UI {
     surface: ImageSurface,
     context_menu: Option<ContextMenu>,
+    last_pointer_pos: Option<Point>,
     actions: &'static [Action],
 }
 
@@ -328,6 +329,7 @@ impl UI {
         Ok(Self {
             surface: ImageSurface::create(Format::ARgb32, width, height)?,
             context_menu: None,
+            last_pointer_pos: None,
             actions,
         })
     }
@@ -391,6 +393,7 @@ impl UI {
     }
 
     pub fn on_pointer_motion(&mut self, pos: Point) -> Result<bool, cairo::Error> {
+        self.last_pointer_pos = Some(pos);
         if let Some(menu) = &mut self.context_menu {
             if menu.update_hover(pos) {
                 self.render()?;
@@ -414,10 +417,11 @@ impl UI {
         Ok(())
     }
 
-    pub fn toggle_context_menu(&mut self, pos: Point) -> Result<(), cairo::Error> {
+    pub fn toggle_context_menu(&mut self) -> Result<(), cairo::Error> {
         if self.context_menu.is_some() {
             self.context_menu = None;
         } else {
+            let pos = self.last_pointer_pos.unwrap_or(Point { x: 0.0, y: 0.0 });
             self.context_menu = Some(ContextMenu::new(
                 pos,
                 self.actions,
