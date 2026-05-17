@@ -19,6 +19,12 @@ impl Color {
         Self { a: 255, r, g, b }
     }
 
+    pub fn luma(&self) -> f64 {
+        0.2126 * (self.r as f64 / 255.0)
+            + 0.7152 * (self.g as f64 / 255.0)
+            + 0.0722 * (self.b as f64 / 255.0)
+    }
+
     pub const RED: Color = Self::rgb(255, 0, 0);
     pub const GREEN: Color = Self::rgb(0, 255, 0);
     pub const BLUE: Color = Self::rgb(0, 0, 255);
@@ -29,9 +35,9 @@ impl Color {
     pub const WHITE: Color = Self::rgb(255, 255, 255);
     pub const TRANSPARENT: Color = Self {
         a: 0,
-        r: 0,
-        g: 0,
-        b: 0,
+        r: 255,
+        g: 255,
+        b: 255,
     };
 }
 

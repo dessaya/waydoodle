@@ -29,85 +29,103 @@ impl Action {
     }
 }
 
-pub(crate) const CONTEXT_MENU: &[Action] = &[
-    Action {
-        op: Op::SetTool(Tool::Pen(Color::RED)),
-        accel: Keysym::r,
-        accel_label: "R",
-        desc: "Red pen",
+pub(crate) enum MenuComponent {
+    Category {
+        name: &'static str,
+        items: &'static [Action],
     },
-    Action {
-        op: Op::SetTool(Tool::Pen(Color::GREEN)),
-        accel: Keysym::g,
-        accel_label: "G",
-        desc: "Green pen",
+    Item(Action),
+}
+
+pub(crate) const CONTEXT_MENU: &[MenuComponent] = &[
+    MenuComponent::Category {
+        name: "Pen",
+        items: &[
+            Action {
+                op: Op::SetTool(Tool::Pen(Color::RED)),
+                accel: Keysym::r,
+                accel_label: "R",
+                desc: "Red pen",
+            },
+            Action {
+                op: Op::SetTool(Tool::Pen(Color::GREEN)),
+                accel: Keysym::g,
+                accel_label: "G",
+                desc: "Green pen",
+            },
+            Action {
+                op: Op::SetTool(Tool::Pen(Color::BLUE)),
+                accel: Keysym::b,
+                accel_label: "B",
+                desc: "Blue pen",
+            },
+            Action {
+                op: Op::SetTool(Tool::Pen(Color::YELLOW)),
+                accel: Keysym::y,
+                accel_label: "Y",
+                desc: "Yellow pen",
+            },
+            Action {
+                op: Op::SetTool(Tool::Pen(Color::MAGENTA)),
+                accel: Keysym::m,
+                accel_label: "M",
+                desc: "Magenta pen",
+            },
+            Action {
+                op: Op::SetTool(Tool::Pen(Color::CYAN)),
+                accel: Keysym::n,
+                accel_label: "N",
+                desc: "Cyan pen",
+            },
+        ],
     },
-    Action {
-        op: Op::SetTool(Tool::Pen(Color::BLUE)),
-        accel: Keysym::b,
-        accel_label: "B",
-        desc: "Blue pen",
-    },
-    Action {
-        op: Op::SetTool(Tool::Pen(Color::YELLOW)),
-        accel: Keysym::y,
-        accel_label: "Y",
-        desc: "Yellow pen",
-    },
-    Action {
-        op: Op::SetTool(Tool::Pen(Color::MAGENTA)),
-        accel: Keysym::m,
-        accel_label: "M",
-        desc: "Magenta pen",
-    },
-    Action {
-        op: Op::SetTool(Tool::Pen(Color::CYAN)),
-        accel: Keysym::n,
-        accel_label: "N",
-        desc: "Cyan pen",
-    },
-    Action {
+    MenuComponent::Item(Action {
         op: Op::SetTool(Tool::Eraser),
         accel: Keysym::e,
         accel_label: "E",
         desc: "Eraser",
+    }),
+    MenuComponent::Category {
+        name: "Background",
+        items: &[
+            Action {
+                op: Op::SetBackground(Color::BLACK),
+                accel: Keysym::period,
+                accel_label: ".",
+                desc: "Black background",
+            },
+            Action {
+                op: Op::SetBackground(Color::WHITE),
+                accel: Keysym::comma,
+                accel_label: ",",
+                desc: "White background",
+            },
+            Action {
+                op: Op::SetBackground(Color::TRANSPARENT),
+                accel: Keysym::slash,
+                accel_label: "/",
+                desc: "Transparent background",
+            },
+        ],
     },
-    Action {
+    MenuComponent::Item(Action {
         op: Op::Clear,
         accel: Keysym::c,
         accel_label: "C",
         desc: "Clear screen",
-    },
-    Action {
-        op: Op::SetBackground(Color::BLACK),
-        accel: Keysym::period,
-        accel_label: ".",
-        desc: "Black background",
-    },
-    Action {
-        op: Op::SetBackground(Color::WHITE),
-        accel: Keysym::comma,
-        accel_label: ",",
-        desc: "White background",
-    },
-    Action {
-        op: Op::SetBackground(Color::TRANSPARENT),
-        accel: Keysym::slash,
-        accel_label: "/",
-        desc: "Transparent background",
-    },
-    Action {
+    }),
+    MenuComponent::Item(Action {
         op: Op::Undo,
         accel: Keysym::u,
         accel_label: "U",
         desc: "Undo",
-    },
-    Action {
+    }),
+    MenuComponent::Item(Action {
         op: Op::HideOverlay,
         accel: Keysym::Escape,
         accel_label: "Esc",
         desc: "Hide overlay",
-    },
+    }),
 ];
 
 pub(crate) const ACCEL_ONLY: &[Action] = &[Action {
@@ -117,8 +135,15 @@ pub(crate) const ACCEL_ONLY: &[Action] = &[Action {
     desc: "Toggle context menu",
 }];
 
+pub(crate) fn menu_actions() -> impl Iterator<Item = &'static Action> {
+    CONTEXT_MENU.iter().flat_map(|component| match component {
+        MenuComponent::Category { items, .. } => items.iter(),
+        MenuComponent::Item(action) => std::slice::from_ref(action).iter(),
+    })
+}
+
 pub(crate) fn all_actions() -> impl Iterator<Item = &'static Action> {
-    CONTEXT_MENU.iter().chain(ACCEL_ONLY.iter())
+    menu_actions().chain(ACCEL_ONLY.iter())
 }
 
 #[cfg(test)]
@@ -127,7 +152,7 @@ mod tests {
 
     #[test]
     fn swatch_returns_some_for_pen_entries() {
-        for info in CONTEXT_MENU {
+        for info in menu_actions() {
             if let Op::SetTool(Tool::Pen(color)) = info.op {
                 assert_eq!(info.swatch(), Some(color));
             }
@@ -136,7 +161,7 @@ mod tests {
 
     #[test]
     fn swatch_returns_none_for_non_pen_entries() {
-        for info in CONTEXT_MENU {
+        for info in menu_actions() {
             match info.op {
                 Op::SetTool(Tool::Pen(_)) | Op::SetBackground(_) => {}
                 _ => {
@@ -200,7 +225,7 @@ mod tests {
 
     #[test]
     fn swatch_returns_some_for_fill_background_entries() {
-        for info in CONTEXT_MENU {
+        for info in menu_actions() {
             if let Op::SetBackground(_) = info.op {
                 assert!(
                     info.swatch().is_some(),
