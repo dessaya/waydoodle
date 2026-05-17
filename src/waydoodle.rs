@@ -55,12 +55,14 @@ pub(crate) enum CursorShape {
     Circle,
 }
 
+#[derive(Debug)]
 pub(crate) struct Stroke {
     pub color: Color,
     pub brush_radius: f64,
     pub points: Vec<Point>,
 }
 
+#[derive(Debug)]
 pub(crate) enum HistoryItem {
     Stroke(Stroke),
     Clear,
@@ -826,5 +828,39 @@ mod tests {
         assert!(keep);
         assert!(redraw);
         assert!(!overlay.ui.is_context_menu_open());
+    }
+
+    #[test]
+    fn menu_can_be_used_with_keyboard() {
+        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT).unwrap();
+
+        // Open the menu with space.
+        let (keep, redraw, _) = overlay.on_key_pressed(Keysym::space);
+        assert!(keep);
+        assert!(redraw);
+        assert!(overlay.ui.is_context_menu_open());
+
+        // Focus Clear and apply it.
+        let (keep, redraw, _) = overlay.on_key_pressed(Keysym::Up);
+        assert!(keep);
+        assert!(redraw);
+        let (keep, redraw, _) = overlay.on_key_pressed(Keysym::Up);
+        assert!(keep);
+        assert!(redraw);
+        let (keep, redraw, _) = overlay.on_key_pressed(Keysym::Up);
+        assert!(keep);
+        assert!(redraw);
+        assert!(matches!(
+            overlay.ui.get_menu_selection(),
+            Some(Action::Clear)
+        ));
+        let (keep, redraw, _) = overlay.on_key_pressed(Keysym::Return);
+        assert!(keep);
+        assert!(redraw);
+        assert!(!overlay.ui.is_context_menu_open());
+        assert!(matches!(
+            overlay.history.last(),
+            Some(HistoryItem::Clear(_))
+        ));
     }
 }
