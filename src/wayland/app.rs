@@ -1,4 +1,3 @@
-use cairo::RectangleInt;
 use calloop::{
     channel::Event,
     signals::{Signal, Signals},
@@ -19,7 +18,7 @@ use wayland_protocols::wp::tablet::zv2::client::zwp_tablet_manager_v2;
 use super::{WaylandState, cursors::Cursors};
 use crate::{
     tray::{TrayEvent, WaydoodleTray},
-    waydoodle::{CursorShape, OverlayController},
+    waydoodle::OverlayController,
     wayland::{App, OverlayStatus},
 };
 
@@ -155,25 +154,18 @@ impl App {
         }
     }
 
-    pub fn handle_overlay_event_result(
-        &mut self,
-        keep_open: bool,
-        redraw: bool,
-        shape: CursorShape,
-    ) {
+    pub fn update_overlay_after_event(&mut self) {
         let Some(OverlayStatus::Ready(overlay)) = self.overlay.as_mut() else {
             return;
         };
-        if !keep_open {
+        if !overlay.state.keep_open {
             self.destroy_overlay();
             return;
         }
-        if redraw {
-            overlay.mark_dirty(
-                &self.queue_handle,
-                RectangleInt::new(0, 0, overlay.width(), overlay.height()),
-            );
+        if let Some(damage) = overlay.state.take_damage() {
+            overlay.mark_dirty(&self.queue_handle, damage);
         }
+        let shape = overlay.state.cursor_shape();
         self.apply_cursor(shape);
     }
 }

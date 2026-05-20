@@ -29,6 +29,7 @@ use wayland_protocols::wp::{
 
 use crate::{
     tray::WaydoodleTray,
+    waydoodle::CursorShape,
     wayland::overlay::{Overlay, WaylandWindow},
 };
 
@@ -42,6 +43,7 @@ struct PointerState {
     pub wl_pointer: wl_pointer::WlPointer,
     pub device: WpCursorShapeDeviceV1,
     pub enter_serial: u32,
+    pub shape: Option<CursorShape>,
 }
 
 impl Drop for PointerState {

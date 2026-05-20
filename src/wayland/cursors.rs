@@ -141,8 +141,12 @@ impl App {
         self.set_tablet_cursor(shape);
     }
 
-    fn set_pointer_cursor(&self, shape: CursorShape) {
-        for ptr in &self.pointers {
+    fn set_pointer_cursor(&mut self, shape: CursorShape) {
+        for ptr in self.pointers.iter_mut() {
+            if ptr.shape == Some(shape) {
+                continue;
+            }
+            ptr.shape = Some(shape);
             match shape {
                 CursorShape::Crosshair => {
                     ptr.device.set_shape(
@@ -165,11 +169,14 @@ impl App {
 
     fn set_tablet_cursor(&mut self, shape: CursorShape) {
         for tablet in &mut self.tablets {
+            if tablet.shape == Some(shape) {
+                continue;
+            }
             let active = match tablet.active_tool.as_ref() {
                 Some(a) => a,
                 None => continue,
             };
-
+            tablet.shape = Some(shape);
             match shape {
                 CursorShape::Crosshair => {
                     if let Some(cursor) = tablet.cursor.cursor_theme.get_cursor("crosshair") {

@@ -76,18 +76,24 @@ pub(crate) struct OverlayState {
     pub override_tool: Option<Tool>,
     pub history: Vec<HistoryItem>,
     pub ui: UI,
+    pub keep_open: bool,
+    damage: Vec<RectangleInt>,
 }
 
 impl OverlayState {
     pub fn new(width: i32, height: i32) -> Result<Self, cairo::Error> {
+        let canvas = Canvas::new(width, height);
+        let rect = canvas.rect();
         Ok(Self {
-            canvas: Canvas::new(width, height),
+            canvas,
             current_stroke: None,
             background_color: Color::TRANSPARENT,
             primary_tool: Tool::default(),
             override_tool: None,
             history: Vec::new(),
             ui: UI::new(width, height)?,
+            keep_open: true,
+            damage: vec![rect],
         })
     }
 
@@ -95,19 +101,16 @@ impl OverlayState {
         self.override_tool.unwrap_or(self.primary_tool)
     }
 
-    // Returns keep_open
-    fn apply_action(&mut self, action: Action) -> bool {
+    fn apply_action(&mut self, action: Action) {
         match action {
             Action::SetTool(tool) => {
                 self.primary_tool = tool;
                 self.ui.close_context_menu().unwrap();
-                true
             }
             Action::Clear => {
                 self.canvas.fill(self.background_color);
                 self.history.push(HistoryItem::Clear(self.background_color));
                 self.ui.close_context_menu().unwrap();
-                true
             }
             Action::SetBackground(color) => {
                 if self.background_color != color {
@@ -116,7 +119,6 @@ impl OverlayState {
                     self.history.push(HistoryItem::Clear(self.background_color));
                 }
                 self.ui.close_context_menu().unwrap();
-                true
             }
             Action::Undo => {
                 if self.history.pop().is_some() {
@@ -124,29 +126,27 @@ impl OverlayState {
                     self.replay_history();
                 }
                 self.ui.close_context_menu().unwrap();
-                true
             }
             Action::OpenContextMenu => {
                 self.ui.open_context_menu().unwrap();
-                true
             }
             Action::CloseContextMenu => {
                 self.ui.close_context_menu().unwrap();
-                true
             }
             Action::Focus(direction) => {
                 self.ui.focus_menu_item(direction).unwrap();
-                true
             }
             Action::ApplyMenuSelection => {
                 if let Some(action) = self.ui.get_menu_selection() {
                     self.apply_action(action);
                 }
                 self.ui.close_context_menu().unwrap();
-                true
             }
-            Action::HideOverlay => false,
-        }
+            Action::HideOverlay => {
+                self.keep_open = false;
+            }
+        };
+        self.mark_dirty(self.canvas.rect());
     }
 
     fn replay_history(&mut self) {
@@ -190,67 +190,174 @@ impl OverlayState {
             })
     }
 
-    // Returns (keep_open, redraw, cursor)
-    pub fn on_key_pressed(&mut self, keysym: Keysym) -> (bool, bool, CursorShape) {
+    fn mark_dirty(&mut self, damage: RectangleInt) {
+        self.damage.push(damage);
+    }
+
+    pub(crate) fn take_damage(&mut self) -> Option<RectangleInt> {
+        if self.damage.is_empty() {
+            return None;
+        }
+        let mut total = RectangleInt::new(0, 0, 0, 0);
+        for damage in self.damage.iter() {
+            if damage.width() == 0 || damage.height() == 0 {
+                continue;
+            }
+            if damage.x() < total.x() {
+                total.set_x(damage.x());
+            }
+            if damage.y() < total.y() {
+                total.set_y(damage.y());
+            }
+            if damage.x() + damage.width() > total.x() + total.width() {
+                total.set_width(damage.x() + damage.width() - total.x());
+            }
+            if damage.y() + damage.height() > total.y() + total.height() {
+                total.set_height(damage.y() + damage.height() - total.y());
+            }
+        }
+        self.damage.clear();
+        Some(total)
+    }
+
+    pub(crate) fn on_key_pressed(&mut self, keysym: Keysym) {
         let Some(action) = self.match_accel(keysym) else {
-            return (true, false, self.current_tool().cursor_shape());
+            return;
         };
-        let keep_open = self.apply_action(action);
-        (keep_open, true, self.current_tool().cursor_shape())
+        self.apply_action(action);
     }
 
-    pub fn on_pointer_enter(&mut self) -> CursorShape {
-        self.current_tool().cursor_shape()
+    pub(crate) fn on_tablet_down(&mut self, pos: Point) {
+        if self.ui.is_context_menu_open() {
+            self.on_button_pressed(pos, InputButton::Primary);
+        } else {
+            self.begin_stroke(pos);
+        }
     }
 
-    pub fn on_pointer_leave(&mut self) {
+    pub(crate) fn on_tablet_up(&mut self, pos: Point) {
+        if self.ui.is_context_menu_open() {
+            self.on_button_released(pos, InputButton::Primary);
+        } else {
+            self.end_stroke();
+        }
+    }
+
+    pub(crate) fn on_tablet_button(&mut self, pos: Point, button: InputButton, pressed: bool) {
+        if pressed {
+            self.on_button_pressed(pos, button);
+        } else {
+            self.on_button_released(pos, button);
+        }
+    }
+
+    pub(crate) fn on_tablet_enter(&mut self) {
+        self.on_enter();
+    }
+
+    pub(crate) fn on_tablet_leave(&mut self) {
+        self.on_leave();
+    }
+
+    pub(crate) fn on_tablet_motion(&mut self, pos: Point) {
+        self.on_motion(pos);
+    }
+
+    pub(crate) fn on_pointer_enter(&mut self) {
+        self.on_enter();
+    }
+
+    pub(crate) fn on_pointer_leave(&mut self) {
+        self.on_leave();
+    }
+
+    pub(crate) fn on_pointer_motion(&mut self, pos: Point) {
+        self.on_motion(pos);
+    }
+
+    pub(crate) fn on_pointer_button_pressed(&mut self, pos: Point, input_btn: InputButton) {
+        let handled = self.on_button_pressed(pos, input_btn);
+        if self.keep_open && !handled && input_btn != InputButton::Secondary {
+            self.begin_stroke(pos);
+        }
+    }
+
+    pub(crate) fn on_pointer_button_released(&mut self, pos: Point, input_btn: InputButton) {
+        let handled = self.on_button_released(pos, input_btn);
+        if self.keep_open && !handled && input_btn != InputButton::Secondary {
+            self.end_stroke();
+        }
+    }
+
+    fn on_enter(&mut self) {
         self.current_stroke = None;
     }
 
-    // Returns (keep_open, redraw, cursor)
-    pub fn on_pointer_button_pressed(
-        &mut self,
-        pos: Point,
-        btn: InputButton,
-    ) -> (bool, bool, CursorShape) {
+    fn on_leave(&mut self) {
+        self.current_stroke = None;
+    }
+
+    fn on_button_pressed(&mut self, pos: Point, btn: InputButton) -> bool {
         let (action, handled) = self.ui.on_pointer_button_pressed(pos, btn).unwrap();
         if let Some(action) = action {
-            let keep_open = self.apply_action(action);
-            return (keep_open, true, self.current_tool().cursor_shape());
+            self.apply_action(action);
+            self.mark_dirty(self.canvas.rect());
+            return true;
         }
         if handled {
-            return (true, true, self.current_tool().cursor_shape());
+            self.mark_dirty(self.canvas.rect());
+            return true;
         }
         if self.current_stroke.is_some() {
-            return (true, false, self.current_tool().cursor_shape());
+            return false;
         }
         self.override_tool = if btn == InputButton::Tertiary {
             Some(Tool::Eraser)
         } else {
             None
         };
-        (true, false, self.current_tool().cursor_shape())
+        false
     }
 
-    // Returns (keep_open, redraw, cursor)
-    pub fn on_pointer_button_released(
-        &mut self,
-        pos: Point,
-        btn: InputButton,
-    ) -> (bool, bool, CursorShape) {
+    fn on_button_released(&mut self, pos: Point, btn: InputButton) -> bool {
         let (action, handled) = self.ui.on_pointer_button_released(pos, btn).unwrap();
         if let Some(action) = action {
-            let keep_open = self.apply_action(action);
-            return (keep_open, true, self.current_tool().cursor_shape());
+            self.apply_action(action);
+            self.mark_dirty(self.canvas.rect());
+            return true;
         }
         if handled {
-            return (true, true, self.current_tool().cursor_shape());
+            self.mark_dirty(self.canvas.rect());
+            return true;
         }
         self.override_tool = None;
-        (true, false, self.current_tool().cursor_shape())
+        false
     }
 
-    pub fn begin_stroke(&mut self, pos: Point) -> RectangleInt {
+    fn on_motion(&mut self, pos: Point) {
+        let redraw = self.ui.on_pointer_motion(pos).unwrap();
+        if redraw {
+            self.mark_dirty(self.canvas.rect());
+            return;
+        }
+        if self.ui.is_context_menu_open() {
+            return;
+        }
+        let Some(stroke) = self.current_stroke.as_mut() else {
+            return;
+        };
+        let Some(prev) = stroke.points.last() else {
+            return;
+        };
+        let prev = *prev;
+        stroke.points.push(pos);
+        let brush_radius = stroke.brush_radius;
+        let color = stroke.color;
+        let damage = self.canvas.draw_line(prev, pos, brush_radius, color);
+        self.mark_dirty(damage)
+    }
+
+    fn begin_stroke(&mut self, pos: Point) {
         let tool = self.current_tool();
         let brush_radius = tool.brush_radius();
         let color = tool.pixel_color(self.background_color);
@@ -259,42 +366,25 @@ impl OverlayState {
             brush_radius,
             points: vec![pos],
         });
-        self.canvas.draw_circle(pos, brush_radius, color)
+        let damage = self.canvas.draw_circle(pos, brush_radius, color);
+        self.mark_dirty(damage);
     }
 
-    pub fn end_stroke(&mut self) {
+    fn end_stroke(&mut self) {
         let Some(stroke) = self.current_stroke.take() else {
             return;
         };
         self.history.push(HistoryItem::Stroke(stroke));
     }
 
-    pub fn on_pointer_motion(&mut self, pos: Point) -> Option<RectangleInt> {
-        let redraw = self.ui.on_pointer_motion(pos).unwrap();
-        if redraw {
-            return Some(RectangleInt::new(
-                0,
-                0,
-                self.canvas.width(),
-                self.canvas.height(),
-            ));
-        }
-        if self.ui.is_context_menu_open() {
-            return None;
-        }
-        let mut stroke = self.current_stroke.take()?;
-        let prev = *stroke.points.last()?;
-        stroke.points.push(pos);
-        let brush_radius = stroke.brush_radius;
-        let color = stroke.color;
-        self.current_stroke = Some(stroke);
-        Some(self.canvas.draw_line(prev, pos, brush_radius, color))
-    }
-
     pub fn resize(&mut self, width: i32, height: i32) -> RectangleInt {
         self.canvas = Canvas::new(width, height);
         self.history = Vec::new();
         RectangleInt::new(0, 0, width, height)
+    }
+
+    pub(crate) fn cursor_shape(&self) -> CursorShape {
+        self.current_tool().cursor_shape()
     }
 }
 
@@ -417,21 +507,23 @@ mod tests {
     #[test]
     fn on_key_pressed_r_sets_red_pen() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT).unwrap();
+        let _ = overlay.take_damage();
         overlay.primary_tool = Tool::Eraser;
-        let (keep, redraw, shape) = overlay.on_key_pressed(Keysym::r);
-        assert!(keep);
-        assert!(redraw);
-        assert_eq!(shape, CursorShape::Crosshair);
+        overlay.on_key_pressed(Keysym::r);
+        assert!(overlay.keep_open);
+        assert!(!overlay.damage.is_empty());
+        assert_eq!(overlay.cursor_shape(), CursorShape::Crosshair);
         assert_eq!(overlay.primary_tool, Tool::Pen(Color::RED));
     }
 
     #[test]
     fn on_key_pressed_e_sets_eraser() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT).unwrap();
-        let (keep, redraw, shape) = overlay.on_key_pressed(Keysym::e);
-        assert!(keep);
-        assert!(redraw);
-        assert_eq!(shape, CursorShape::Circle);
+        let _ = overlay.take_damage();
+        overlay.on_key_pressed(Keysym::e);
+        assert!(overlay.keep_open);
+        assert!(!overlay.damage.is_empty());
+        assert_eq!(overlay.cursor_shape(), CursorShape::Circle);
         assert_eq!(overlay.primary_tool, Tool::Eraser);
     }
 
@@ -453,43 +545,47 @@ mod tests {
     #[test]
     fn on_key_pressed_c_clears_canvas() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT).unwrap();
+        let _ = overlay.take_damage();
         overlay.canvas.fill(Color::RED);
 
-        let (keep, redraw, shape) = overlay.on_key_pressed(Keysym::c);
-        assert!(keep);
-        assert!(redraw);
-        assert_eq!(shape, CursorShape::Crosshair);
+        overlay.on_key_pressed(Keysym::c);
+        assert!(overlay.keep_open);
+        assert!(!overlay.damage.is_empty());
+        assert_eq!(overlay.cursor_shape(), CursorShape::Crosshair);
         assert_all_pixels_color(&mut overlay.canvas, Color::TRANSPARENT);
     }
 
     #[test]
     fn on_key_pressed_escape_returns_hide() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT).unwrap();
-        let (keep, redraw, _) = overlay.on_key_pressed(Keysym::Escape);
-        assert!(!keep);
-        assert!(redraw);
+        let _ = overlay.take_damage();
+        overlay.on_key_pressed(Keysym::Escape);
+        assert!(!overlay.keep_open);
     }
 
     #[test]
     fn on_key_pressed_unbound_key_changes_nothing() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT).unwrap();
+        let _ = overlay.take_damage();
         let original_tool = overlay.primary_tool;
 
-        let (keep, redraw, _) = overlay.on_key_pressed(Keysym::z);
-        assert!(keep);
-        assert!(!redraw);
+        overlay.on_key_pressed(Keysym::z);
+        assert!(overlay.keep_open);
+        assert!(overlay.damage.is_empty());
         assert_eq!(overlay.primary_tool, original_tool);
     }
 
     #[test]
     fn on_pointer_motion_with_pen_draws_pixels() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT).unwrap();
+        let _ = overlay.take_damage();
         overlay.primary_tool = Tool::Pen(Color::RED);
         overlay.on_pointer_button_pressed(Point { x: 10.0, y: 10.0 }, InputButton::Primary);
-        overlay.begin_stroke(Point { x: 10.0, y: 10.0 });
 
-        let damage = overlay.on_pointer_motion(Point { x: 20.0, y: 10.0 });
-        let damage = damage.expect("expected damage from motion while pressed");
+        overlay.on_pointer_motion(Point { x: 20.0, y: 10.0 });
+        let damage = overlay
+            .take_damage()
+            .expect("expected damage from pointer motion");
 
         assert!(damage.width() > 0);
         assert!(damage.height() > 0);
@@ -507,26 +603,30 @@ mod tests {
     #[test]
     fn on_pointer_motion_while_not_pressed_returns_none() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT).unwrap();
+        let _ = overlay.take_damage();
 
-        let damage = overlay.on_pointer_motion(Point { x: 20.0, y: 10.0 });
-        assert!(damage.is_none());
+        overlay.on_pointer_motion(Point { x: 20.0, y: 10.0 });
+        assert!(
+            overlay.take_damage().is_none(),
+            "expected no damage when pointer moves without a stroke"
+        );
     }
 
     #[test]
     fn on_pointer_motion_with_eraser_clears_pixels() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT).unwrap();
+        let _ = overlay.take_damage();
         overlay.primary_tool = Tool::Pen(Color::RED);
         overlay.on_pointer_button_pressed(Point { x: 10.0, y: 30.0 }, InputButton::Primary);
-        overlay.begin_stroke(Point { x: 10.0, y: 30.0 });
         overlay.on_pointer_motion(Point { x: 30.0, y: 30.0 });
-        overlay.end_stroke();
         overlay.on_pointer_button_released(Point { x: 30.0, y: 30.0 }, InputButton::Primary);
 
         overlay.primary_tool = Tool::Eraser;
         overlay.on_pointer_button_pressed(Point { x: 10.0, y: 30.0 }, InputButton::Primary);
-        overlay.begin_stroke(Point { x: 10.0, y: 30.0 });
-        let damage = overlay.on_pointer_motion(Point { x: 30.0, y: 30.0 });
-        let damage = damage.expect("expected damage from eraser motion");
+        overlay.on_pointer_motion(Point { x: 30.0, y: 30.0 });
+        let damage = overlay
+            .take_damage()
+            .expect("expected damage from eraser motion");
 
         assert!(damage.width() > 0);
         assert!(damage.height() > 0);
@@ -538,19 +638,18 @@ mod tests {
     #[test]
     fn middle_mouse_button_uses_eraser_tool() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT).unwrap();
+        let _ = overlay.take_damage();
         overlay.primary_tool = Tool::Pen(Color::RED);
         overlay.on_pointer_button_pressed(Point { x: 10.0, y: 30.0 }, InputButton::Primary);
-        overlay.begin_stroke(Point { x: 10.0, y: 30.0 });
         overlay.on_pointer_motion(Point { x: 30.0, y: 30.0 });
-        overlay.end_stroke();
         overlay.on_pointer_button_released(Point { x: 30.0, y: 30.0 }, InputButton::Primary);
 
         overlay.on_pointer_button_pressed(Point { x: 10.0, y: 30.0 }, InputButton::Tertiary);
-        overlay.begin_stroke(Point { x: 10.0, y: 30.0 });
-        let damage = overlay.on_pointer_motion(Point { x: 30.0, y: 30.0 });
-        let damage = damage.expect("expected damage from right-button motion");
-        overlay.end_stroke();
+        overlay.on_pointer_motion(Point { x: 30.0, y: 30.0 });
         overlay.on_pointer_button_released(Point { x: 30.0, y: 30.0 }, InputButton::Tertiary);
+        let damage = overlay
+            .take_damage()
+            .expect("expected damage from middle mouse button motion");
 
         assert!(damage.width() > 0);
         assert!(damage.height() > 0);
@@ -562,10 +661,13 @@ mod tests {
     #[test]
     fn begin_stroke_draws_circle_at_point() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT).unwrap();
+        let _ = overlay.take_damage();
         overlay.primary_tool = Tool::Pen(Color::GREEN);
 
         overlay.on_pointer_button_pressed(Point { x: 32.0, y: 32.0 }, InputButton::Primary);
-        let damage = overlay.begin_stroke(Point { x: 32.0, y: 32.0 });
+        let damage = overlay
+            .take_damage()
+            .expect("expected damage from begin_stroke");
 
         assert!(damage.width() > 0);
         assert!(damage.height() > 0);
@@ -577,8 +679,8 @@ mod tests {
     #[test]
     fn on_pointer_leave_clears_current_stroke() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT).unwrap();
+        let _ = overlay.take_damage();
         overlay.on_pointer_button_pressed(Point { x: 10.0, y: 10.0 }, InputButton::Primary);
-        overlay.begin_stroke(Point { x: 10.0, y: 10.0 });
         assert!(overlay.current_stroke.is_some());
         overlay.on_pointer_leave();
         assert!(overlay.current_stroke.is_none());
@@ -587,10 +689,9 @@ mod tests {
     #[test]
     fn end_stroke_clears_current_stroke() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT).unwrap();
+        let _ = overlay.take_damage();
         overlay.on_pointer_button_pressed(Point { x: 10.0, y: 10.0 }, InputButton::Primary);
-        overlay.begin_stroke(Point { x: 10.0, y: 10.0 });
         assert!(overlay.current_stroke.is_some());
-        overlay.end_stroke();
         overlay.on_pointer_button_released(Point { x: 10.0, y: 10.0 }, InputButton::Primary);
         assert!(overlay.current_stroke.is_none());
     }
@@ -598,6 +699,7 @@ mod tests {
     #[test]
     fn on_size_changed_clears_canvas_and_returns_full_rect() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT).unwrap();
+        let _ = overlay.take_damage();
         overlay.canvas.fill(Color::RED);
 
         let rect = overlay.resize(TEST_WIDTH, TEST_HEIGHT);
@@ -643,18 +745,17 @@ mod tests {
     #[test]
     fn on_key_pressed_u_undoes_last_stroke() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT).unwrap();
+        let _ = overlay.take_damage();
         overlay.primary_tool = Tool::Pen(Color::RED);
         overlay.on_pointer_button_pressed(Point { x: 10.0, y: 10.0 }, InputButton::Primary);
-        overlay.begin_stroke(Point { x: 10.0, y: 10.0 });
         overlay.on_pointer_motion(Point { x: 20.0, y: 10.0 });
-        overlay.end_stroke();
         overlay.on_pointer_button_released(Point { x: 20.0, y: 10.0 }, InputButton::Primary);
 
         assert_eq!(overlay.history.len(), 1);
 
-        let (keep, redraw, _) = overlay.on_key_pressed(Keysym::u);
-        assert!(keep);
-        assert!(redraw);
+        overlay.on_key_pressed(Keysym::u);
+        assert!(overlay.keep_open);
+        assert!(!overlay.damage.is_empty());
         assert!(overlay.history.is_empty());
         assert_all_pixels_color(&mut overlay.canvas, Color::TRANSPARENT);
     }
@@ -662,22 +763,21 @@ mod tests {
     #[test]
     fn on_key_pressed_c_then_u_restores_drawing() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT).unwrap();
+        let _ = overlay.take_damage();
         overlay.primary_tool = Tool::Pen(Color::RED);
         overlay.on_pointer_button_pressed(Point { x: 10.0, y: 10.0 }, InputButton::Primary);
-        overlay.begin_stroke(Point { x: 10.0, y: 10.0 });
         overlay.on_pointer_motion(Point { x: 20.0, y: 10.0 });
-        overlay.end_stroke();
         overlay.on_pointer_button_released(Point { x: 20.0, y: 10.0 }, InputButton::Primary);
 
-        let (keep, redraw, shape) = overlay.on_key_pressed(Keysym::c);
-        assert!(keep);
-        assert!(redraw);
-        assert_eq!(shape, CursorShape::Crosshair);
+        overlay.on_key_pressed(Keysym::c);
+        assert!(overlay.keep_open);
+        assert!(!overlay.damage.is_empty());
+        assert_eq!(overlay.cursor_shape(), CursorShape::Crosshair);
         assert_all_pixels_color(&mut overlay.canvas, Color::TRANSPARENT);
 
-        let (keep, redraw, _) = overlay.on_key_pressed(Keysym::u);
-        assert!(keep);
-        assert!(redraw);
+        overlay.on_key_pressed(Keysym::u);
+        assert!(overlay.keep_open);
+        assert!(!overlay.damage.is_empty());
         assert_eq!(
             overlay.canvas.pixel_at(15, 10),
             Color::RED,
@@ -688,20 +788,17 @@ mod tests {
     #[test]
     fn multiple_strokes_undo_in_order() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT).unwrap();
+        let _ = overlay.take_damage();
 
         overlay.primary_tool = Tool::Pen(Color::RED);
         overlay.on_pointer_button_pressed(Point { x: 10.0, y: 10.0 }, InputButton::Primary);
-        overlay.begin_stroke(Point { x: 10.0, y: 10.0 });
         overlay.on_pointer_motion(Point { x: 20.0, y: 10.0 });
-        overlay.end_stroke();
         overlay.on_pointer_button_released(Point { x: 20.0, y: 10.0 }, InputButton::Primary);
         let after_first = overlay.canvas.surface.data().unwrap().to_vec();
 
         overlay.primary_tool = Tool::Pen(Color::BLUE);
         overlay.on_pointer_button_pressed(Point { x: 10.0, y: 50.0 }, InputButton::Primary);
-        overlay.begin_stroke(Point { x: 10.0, y: 50.0 });
         overlay.on_pointer_motion(Point { x: 20.0, y: 50.0 });
-        overlay.end_stroke();
         overlay.on_pointer_button_released(Point { x: 20.0, y: 50.0 }, InputButton::Primary);
 
         assert_eq!(overlay.history.len(), 2);
@@ -721,10 +818,10 @@ mod tests {
     #[test]
     fn begin_stroke_starts_current_stroke() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT).unwrap();
+        let _ = overlay.take_damage();
         overlay.primary_tool = Tool::Pen(Color::GREEN);
 
         overlay.on_pointer_button_pressed(Point { x: 15.0, y: 25.0 }, InputButton::Primary);
-        overlay.begin_stroke(Point { x: 15.0, y: 25.0 });
 
         let stroke = overlay
             .current_stroke
@@ -737,10 +834,10 @@ mod tests {
     #[test]
     fn on_pointer_motion_appends_to_current_stroke() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT).unwrap();
+        let _ = overlay.take_damage();
         overlay.primary_tool = Tool::Pen(Color::RED);
 
         overlay.on_pointer_button_pressed(Point { x: 5.0, y: 5.0 }, InputButton::Primary);
-        overlay.begin_stroke(Point { x: 5.0, y: 5.0 });
         overlay.on_pointer_motion(Point { x: 15.0, y: 15.0 });
 
         let stroke = overlay
@@ -754,12 +851,11 @@ mod tests {
     #[test]
     fn end_stroke_finalizes_stroke() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT).unwrap();
+        let _ = overlay.take_damage();
         overlay.primary_tool = Tool::Pen(Color::RED);
 
         overlay.on_pointer_button_pressed(Point { x: 5.0, y: 5.0 }, InputButton::Primary);
-        overlay.begin_stroke(Point { x: 5.0, y: 5.0 });
         overlay.on_pointer_motion(Point { x: 15.0, y: 15.0 });
-        overlay.end_stroke();
         overlay.on_pointer_button_released(Point { x: 15.0, y: 15.0 }, InputButton::Primary);
 
         assert!(overlay.current_stroke.is_none());
@@ -769,12 +865,11 @@ mod tests {
     #[test]
     fn on_size_changed_clears_history() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT).unwrap();
+        let _ = overlay.take_damage();
         overlay.primary_tool = Tool::Pen(Color::RED);
 
         overlay.on_pointer_button_pressed(Point { x: 10.0, y: 10.0 }, InputButton::Primary);
-        overlay.begin_stroke(Point { x: 10.0, y: 10.0 });
         overlay.on_pointer_motion(Point { x: 20.0, y: 10.0 });
-        overlay.end_stroke();
         overlay.on_pointer_button_released(Point { x: 20.0, y: 10.0 }, InputButton::Primary);
 
         assert_eq!(overlay.history.len(), 1);
@@ -787,10 +882,11 @@ mod tests {
     #[test]
     fn on_key_pressed_period_fills_black_background() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT).unwrap();
+        let _ = overlay.take_damage();
 
-        let (keep, redraw, _) = overlay.on_key_pressed(Keysym::period);
-        assert!(keep);
-        assert!(redraw);
+        overlay.on_key_pressed(Keysym::period);
+        assert!(overlay.keep_open);
+        assert!(!overlay.damage.is_empty());
         assert_eq!(overlay.history.len(), 1);
         assert_eq!(overlay.canvas.pixel_at(0, 0), Color::BLACK);
         assert_eq!(overlay.canvas.pixel_at(50, 40), Color::BLACK);
@@ -799,10 +895,11 @@ mod tests {
     #[test]
     fn on_key_pressed_comma_fills_white_background() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT).unwrap();
+        let _ = overlay.take_damage();
 
-        let (keep, redraw, _) = overlay.on_key_pressed(Keysym::comma);
-        assert!(keep);
-        assert!(redraw);
+        overlay.on_key_pressed(Keysym::comma);
+        assert!(overlay.keep_open);
+        assert!(!overlay.damage.is_empty());
         assert_eq!(overlay.history.len(), 1);
         assert_eq!(overlay.canvas.pixel_at(0, 0), Color::WHITE);
         assert_eq!(overlay.canvas.pixel_at(50, 40), Color::WHITE);
@@ -811,20 +908,20 @@ mod tests {
     #[test]
     fn fill_background_then_undo_restores_previous() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT).unwrap();
+        let _ = overlay.take_damage();
         overlay.primary_tool = Tool::Pen(Color::RED);
 
         overlay.on_pointer_button_pressed(Point { x: 10.0, y: 10.0 }, InputButton::Primary);
-        overlay.begin_stroke(Point { x: 10.0, y: 10.0 });
         overlay.on_pointer_motion(Point { x: 20.0, y: 10.0 });
-        overlay.end_stroke();
+        overlay.on_pointer_button_released(Point { x: 20.0, y: 10.0 }, InputButton::Primary);
         let buf_after_draw: Vec<u8> = overlay.canvas.surface.data().unwrap().to_vec();
 
         overlay.on_key_pressed(Keysym::period);
         assert_eq!(overlay.canvas.pixel_at(0, 0), Color::BLACK);
 
-        let (keep, redraw, _) = overlay.on_key_pressed(Keysym::u);
-        assert!(keep);
-        assert!(redraw);
+        overlay.on_key_pressed(Keysym::u);
+        assert!(overlay.keep_open);
+        assert!(!overlay.damage.is_empty());
         assert_eq!(
             overlay.canvas.surface.data().unwrap().to_vec(),
             buf_after_draw.as_slice()
@@ -834,11 +931,11 @@ mod tests {
     #[test]
     fn right_mouse_button_opens_context_menu() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT).unwrap();
+        let _ = overlay.take_damage();
 
-        let (keep, redraw, _) =
-            overlay.on_pointer_button_pressed(Point { x: 10.0, y: 10.0 }, InputButton::Secondary);
-        assert!(keep);
-        assert!(redraw);
+        overlay.on_pointer_button_pressed(Point { x: 10.0, y: 10.0 }, InputButton::Secondary);
+        assert!(overlay.keep_open);
+        assert!(!overlay.damage.is_empty());
         assert!(overlay.ui.is_context_menu_open());
 
         // hover some menu item
@@ -847,46 +944,48 @@ mod tests {
             x: rect.x() as f64 + rect.width() as f64 - 5.0,
             y: rect.y() as f64 + 5.0,
         };
-        let damage = overlay.on_pointer_motion(point).unwrap_or_else(|| {
-            panic!("expected Some from pointer motion while context menu is open")
-        });
+        overlay.on_pointer_motion(point);
+        let damage = overlay
+            .take_damage()
+            .expect("expected damage from hovering menu item");
         assert!(damage.width() > 0);
 
         // Release the button.
         // Some op should be triggered, and the menu should close.
-        let (keep, redraw, _) = overlay.on_pointer_button_released(point, InputButton::Secondary);
-        assert!(keep);
-        assert!(redraw);
+        overlay.on_pointer_button_released(point, InputButton::Secondary);
+        assert!(overlay.keep_open);
+        assert!(!overlay.damage.is_empty());
         assert!(!overlay.ui.is_context_menu_open());
     }
 
     #[test]
     fn menu_can_be_used_with_keyboard() {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT).unwrap();
+        let _ = overlay.take_damage();
 
         // Open the menu with space.
-        let (keep, redraw, _) = overlay.on_key_pressed(Keysym::space);
-        assert!(keep);
-        assert!(redraw);
+        overlay.on_key_pressed(Keysym::space);
+        assert!(overlay.keep_open);
+        assert!(!overlay.damage.is_empty());
         assert!(overlay.ui.is_context_menu_open());
 
         // Focus Clear and apply it.
-        let (keep, redraw, _) = overlay.on_key_pressed(Keysym::Up);
-        assert!(keep);
-        assert!(redraw);
-        let (keep, redraw, _) = overlay.on_key_pressed(Keysym::Up);
-        assert!(keep);
-        assert!(redraw);
-        let (keep, redraw, _) = overlay.on_key_pressed(Keysym::Up);
-        assert!(keep);
-        assert!(redraw);
+        overlay.on_key_pressed(Keysym::Up);
+        assert!(overlay.keep_open);
+        assert!(!overlay.damage.is_empty());
+        overlay.on_key_pressed(Keysym::Up);
+        assert!(overlay.keep_open);
+        assert!(!overlay.damage.is_empty());
+        overlay.on_key_pressed(Keysym::Up);
+        assert!(overlay.keep_open);
+        assert!(!overlay.damage.is_empty());
         assert!(matches!(
             overlay.ui.get_menu_selection(),
             Some(Action::Clear)
         ));
-        let (keep, redraw, _) = overlay.on_key_pressed(Keysym::Return);
-        assert!(keep);
-        assert!(redraw);
+        overlay.on_key_pressed(Keysym::Return);
+        assert!(overlay.keep_open);
+        assert!(!overlay.damage.is_empty());
         assert!(!overlay.ui.is_context_menu_open());
         assert!(matches!(
             overlay.history.last(),

@@ -55,6 +55,10 @@ impl Canvas {
         Self { surface }
     }
 
+    pub fn rect(&self) -> RectangleInt {
+        RectangleInt::new(0, 0, self.width(), self.height())
+    }
+
     pub fn width(&self) -> i32 {
         self.surface.width()
     }
