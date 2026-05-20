@@ -8,9 +8,10 @@ use wayland_protocols::wp::tablet::zv2::client::{
 };
 
 use crate::waydoodle::InputButton;
+use crate::wayland::OverlayStatus;
 use crate::{canvas::Point, wayland::App};
 
-use super::{OverlayState, cursors::TabletCursorState};
+use super::cursors::TabletCursorState;
 
 pub(super) struct ActiveTabletTool {
     pub tool: zwp_tablet_tool_v2::ZwpTabletToolV2,
@@ -69,7 +70,7 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for App {
                     tool: tool.clone(),
                     serial,
                 });
-                if let Some(OverlayState::Ready(overlay)) = state.overlay.as_mut() {
+                if let Some(OverlayStatus::Ready(overlay)) = state.overlay.as_mut() {
                     let shape = overlay.state.on_pointer_enter();
                     state.apply_cursor(shape);
                 }
@@ -82,7 +83,7 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for App {
                 else {
                     return;
                 };
-                if let Some(OverlayState::Ready(overlay)) = state.overlay.as_mut() {
+                if let Some(OverlayStatus::Ready(overlay)) = state.overlay.as_mut() {
                     overlay.state.on_pointer_leave();
                 }
                 tablet.active_tool = None;
@@ -102,7 +103,7 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for App {
                 let pressed = btn_state
                     .into_result()
                     .is_ok_and(|s| s == ButtonState::Pressed);
-                if let Some(OverlayState::Ready(overlay)) = state.overlay.as_mut() {
+                if let Some(OverlayStatus::Ready(overlay)) = state.overlay.as_mut() {
                     // from linux/input-event-codes.h
                     const BTN_STYLUS: u32 = 0x14b;
                     let input_btn = if btn == BTN_STYLUS {
@@ -130,7 +131,7 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for App {
                 else {
                     return;
                 };
-                if let Some(OverlayState::Ready(overlay)) = state.overlay.as_mut() {
+                if let Some(OverlayStatus::Ready(overlay)) = state.overlay.as_mut() {
                     let damage = overlay.state.begin_stroke(tablet.pos);
                     overlay.mark_dirty(qh, damage);
                 }
@@ -144,7 +145,7 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for App {
                 {
                     return;
                 };
-                if let Some(OverlayState::Ready(overlay)) = state.overlay.as_mut() {
+                if let Some(OverlayStatus::Ready(overlay)) = state.overlay.as_mut() {
                     overlay.state.end_stroke();
                 }
             }
@@ -157,7 +158,7 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for App {
                     return;
                 };
                 tablet.pos = Point { x, y };
-                if let Some(OverlayState::Ready(overlay)) = state.overlay.as_mut()
+                if let Some(OverlayStatus::Ready(overlay)) = state.overlay.as_mut()
                     && let Some(damage) = overlay.state.on_pointer_motion(tablet.pos)
                 {
                     overlay.mark_dirty(qh, damage);

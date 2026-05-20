@@ -23,9 +23,13 @@ use wayland_client::{
     protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_surface},
 };
 
-use crate::{canvas::Point, waydoodle::InputButton, wayland::App};
+use crate::{
+    canvas::Point,
+    waydoodle::InputButton,
+    wayland::{App, OverlayStatus},
+};
 
-use super::{OverlayState, PointerState, cursors::TabletCursorState, tablet::TabletState};
+use super::{PointerState, cursors::TabletCursorState, tablet::TabletState};
 
 impl CompositorHandler for App {
     fn scale_factor_changed(
@@ -53,7 +57,7 @@ impl CompositorHandler for App {
         _surface: &wl_surface::WlSurface,
         _time: u32,
     ) {
-        if let Some(OverlayState::Ready(o)) = self.overlay.as_mut() {
+        if let Some(OverlayStatus::Ready(o)) = self.overlay.as_mut() {
             o.on_frame_callback(qh)
         }
     }
@@ -282,7 +286,7 @@ impl KeyboardHandler for App {
         _serial: u32,
         event: KeyEvent,
     ) {
-        let Some(OverlayState::Ready(overlay)) = self.overlay.as_mut() else {
+        let Some(OverlayStatus::Ready(overlay)) = self.overlay.as_mut() else {
             return;
         };
         let (keep_open, redraw, shape) = overlay.state.on_key_pressed(event.keysym);
@@ -347,7 +351,7 @@ impl PointerHandler for App {
                         continue;
                     };
                     ptr.enter_serial = serial;
-                    if let Some(OverlayState::Ready(overlay)) = self.overlay.as_mut() {
+                    if let Some(OverlayStatus::Ready(overlay)) = self.overlay.as_mut() {
                         let shape = overlay.state.on_pointer_enter();
                         self.apply_cursor(shape);
                     }
@@ -361,7 +365,7 @@ impl PointerHandler for App {
                     {
                         continue;
                     };
-                    if let Some(OverlayState::Ready(overlay)) = self.overlay.as_mut() {
+                    if let Some(OverlayStatus::Ready(overlay)) = self.overlay.as_mut() {
                         overlay.state.on_pointer_leave();
                     }
                 }
@@ -374,7 +378,7 @@ impl PointerHandler for App {
                     {
                         continue;
                     };
-                    if let Some(OverlayState::Ready(overlay)) = self.overlay.as_mut() {
+                    if let Some(OverlayStatus::Ready(overlay)) = self.overlay.as_mut() {
                         let pos = Point {
                             x: event.position.0,
                             y: event.position.1,
@@ -396,7 +400,7 @@ impl PointerHandler for App {
                     let Some((input_btn, pos)) = input_btn_pos(button, event) else {
                         continue;
                     };
-                    if let Some(OverlayState::Ready(overlay)) = self.overlay.as_mut() {
+                    if let Some(OverlayStatus::Ready(overlay)) = self.overlay.as_mut() {
                         let (keep_open, redraw, cursor_shape) =
                             overlay.state.on_pointer_button_pressed(pos, input_btn);
                         if keep_open && !redraw && input_btn != InputButton::Secondary {
@@ -418,7 +422,7 @@ impl PointerHandler for App {
                     let Some((input_btn, pos)) = input_btn_pos(button, event) else {
                         continue;
                     };
-                    if let Some(OverlayState::Ready(overlay)) = self.overlay.as_mut() {
+                    if let Some(OverlayStatus::Ready(overlay)) = self.overlay.as_mut() {
                         let (keep_open, redraw, cursor_shape) =
                             overlay.state.on_pointer_button_released(pos, input_btn);
                         if keep_open && !redraw && input_btn != InputButton::Secondary {

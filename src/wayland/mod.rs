@@ -66,23 +66,23 @@ struct WaylandState {
 /// Once we receive the configure event, we create the buffers and transition to
 /// the Ready state.
 #[allow(clippy::large_enum_variant)]
-enum OverlayState {
+enum OverlayStatus {
     Pending(WaylandWindow),
     Ready(Overlay),
 }
 
-impl OverlayState {
+impl OverlayStatus {
     fn window(&self) -> &WaylandWindow {
         match self {
-            OverlayState::Pending(w) => w,
-            OverlayState::Ready(o) => &o.window,
+            OverlayStatus::Pending(w) => w,
+            OverlayStatus::Ready(o) => &o.window,
         }
     }
 }
 
 pub(crate) struct App {
     wayland: WaylandState,
-    overlay: Option<OverlayState>,
+    overlay: Option<OverlayStatus>,
     cursors: Cursors,
     keyboards: Vec<KeyboardState>,
     pointers: Vec<PointerState>,

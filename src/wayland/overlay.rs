@@ -15,7 +15,7 @@ use wayland_client::protocol::wl_surface::WlSurface;
 
 use crate::{
     waydoodle::{self},
-    wayland::{App, OverlayState},
+    wayland::{App, OverlayStatus},
 };
 
 pub enum WaylandWindow {
@@ -90,7 +90,7 @@ impl App {
     }
 }
 
-impl waydoodle::App<Overlay> for App {
+impl waydoodle::OverlayController for App {
     fn create_overlay(&mut self) {
         debug_assert!(
             self.overlay.is_none(),
@@ -141,7 +141,7 @@ impl waydoodle::App<Overlay> for App {
                 WaylandWindow::XdgWindow(window)
             }
         };
-        self.overlay = Some(OverlayState::Pending(xdg_window_or_layer_surface));
+        self.overlay = Some(OverlayStatus::Pending(xdg_window_or_layer_surface));
     }
 
     fn destroy_overlay(&mut self) {
@@ -149,7 +149,7 @@ impl waydoodle::App<Overlay> for App {
     }
 
     fn toggle_focus_or_destroy_overlay(&mut self) {
-        let Some(OverlayState::Ready(overlay)) = self.overlay.as_mut() else {
+        let Some(OverlayStatus::Ready(overlay)) = self.overlay.as_mut() else {
             return;
         };
         match &overlay.window {
@@ -175,11 +175,11 @@ impl waydoodle::App<Overlay> for App {
         }
     }
 
-    fn get_overlay(&self) -> Option<Option<&Overlay>> {
+    fn overlay_status(&self) -> waydoodle::OverlayStatus {
         match &self.overlay {
-            Some(OverlayState::Ready(overlay)) => Some(Some(overlay)),
-            Some(OverlayState::Pending(_)) => Some(None),
-            None => None,
+            Some(OverlayStatus::Ready(_)) => waydoodle::OverlayStatus::Ready,
+            Some(OverlayStatus::Pending(_)) => waydoodle::OverlayStatus::Pending,
+            None => waydoodle::OverlayStatus::None,
         }
     }
 }
@@ -188,9 +188,9 @@ impl App {
     pub(crate) fn on_configure(&mut self, width: u32, height: u32) {
         let (width, height) = (width as i32, height as i32);
         match &mut self.overlay {
-            Some(OverlayState::Pending(_)) => {
+            Some(OverlayStatus::Pending(_)) => {
                 // Transition Pending → Ready: take the Window out and build the full Overlay.
-                let Some(OverlayState::Pending(window)) = self.overlay.take() else {
+                let Some(OverlayStatus::Pending(window)) = self.overlay.take() else {
                     unreachable!();
                 };
                 let (pool, buffers) =
@@ -207,9 +207,9 @@ impl App {
                         .expect("Failed to create overlay state"),
                 };
                 overlay.mark_dirty(&self.queue_handle, RectangleInt::new(0, 0, width, height));
-                self.overlay = Some(OverlayState::Ready(overlay));
+                self.overlay = Some(OverlayStatus::Ready(overlay));
             }
-            Some(OverlayState::Ready(overlay))
+            Some(OverlayStatus::Ready(overlay))
                 if width != overlay.width() || height != overlay.height() =>
             {
                 log::debug!(

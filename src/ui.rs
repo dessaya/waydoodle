@@ -2,43 +2,181 @@ use cairo::{
     BorrowError, Context, FontFace, FontSlant, FontWeight, Format, ImageSurface, ImageSurfaceData,
     RectangleInt,
 };
+use smithay_client_toolkit::seat::keyboard::Keysym;
 
 use crate::{
-    actions::{Action, MenuComponent, Op},
-    canvas::Point,
-    waydoodle::InputButton,
+    actions::{Action, FocusDirection, GLOBAL_ACCELS, NO_MENU_ACCELS},
+    canvas::{Color, Point},
+    waydoodle::{InputButton, Tool},
 };
 
-// An interactive button: hoverable and yields an Op when activated.
-struct MenuButton {
-    rect: RectangleInt,
-    action: &'static Action,
-}
-
-// A single row in the context menu.
-enum Row {
-    // "Pen [R] [G] [B] ..."  — non-hoverable label followed by compact buttons.
+enum MenuComponent {
     Category {
-        label: &'static str,
+        name: &'static str,
         label_rect: RectangleInt,
-        first_button_idx: usize,
-        button_count: usize,
+        items: Vec<SwatchMenuItem>,
     },
-    // "Erase    E"  — full-width button with description on the left and accel on the right.
-    Item {
-        button_idx: usize,
-    },
+    Item(RowMenuItem),
 }
 
-impl Row {
+struct SwatchMenuItem {
+    pub swatch: Color,
+    pub btn: MenuButton,
+}
+
+struct RowMenuItem {
+    pub label: &'static str,
+    pub btn: MenuButton,
+}
+
+struct MenuButton {
+    pub id: usize,
+    pub action: Action,
+    pub rect: RectangleInt,
+    pub accel: &'static str,
+}
+
+impl MenuButton {
+    fn hit(&self, x: i32, y: i32) -> bool {
+        x >= self.rect.x()
+            && x < self.rect.x() + self.rect.width()
+            && y >= self.rect.y()
+            && y < self.rect.y() + self.rect.height()
+    }
+
+    fn dy(&self, btn: &MenuButton) -> i32 {
+        btn.rect.y() - self.rect.y()
+    }
+
+    fn dx(&self, btn: &MenuButton) -> i32 {
+        btn.rect.x() - self.rect.x()
+    }
+}
+
+fn build_menu() -> Vec<MenuComponent> {
+    let mut id = 0;
+    let pen_items = build_pen_menu_items(id);
+    id += pen_items.len();
+    let eraser_item = build_row_menu_item(id, "Eraser", Action::SetTool(Tool::Eraser));
+    id += 1;
+    let background_items = build_background_menu_items(id);
+    id += background_items.len();
+    let clear_item = build_row_menu_item(id, "Clear screen", Action::Clear);
+    id += 1;
+    let undo_item = build_row_menu_item(id, "Undo", Action::Undo);
+    id += 1;
+    let hide_overlay_item = build_row_menu_item(id, "Hide overlay", Action::HideOverlay);
+
+    vec![
+        MenuComponent::Category {
+            name: "Pen",
+            items: pen_items,
+            label_rect: RectangleInt::new(0, 0, 0, 0),
+        },
+        MenuComponent::Item(eraser_item),
+        MenuComponent::Category {
+            name: "Background",
+            items: background_items,
+            label_rect: RectangleInt::new(0, 0, 0, 0),
+        },
+        MenuComponent::Item(clear_item),
+        MenuComponent::Item(undo_item),
+        MenuComponent::Item(hide_overlay_item),
+    ]
+}
+
+fn build_pen_menu_items(start_id: usize) -> Vec<SwatchMenuItem> {
+    GLOBAL_ACCELS
+        .iter()
+        .filter(|(_, action)| matches!(action, Action::SetTool(Tool::Pen(_))))
+        .enumerate()
+        .map(move |(i, (keysym, action))| match action {
+            Action::SetTool(Tool::Pen(color)) => SwatchMenuItem {
+                swatch: *color,
+                btn: MenuButton {
+                    id: start_id + i,
+                    action: *action,
+                    accel: accel_label(*keysym),
+                    rect: RectangleInt::new(0, 0, 0, 0),
+                },
+            },
+            _ => unreachable!(),
+        })
+        .collect()
+}
+
+fn build_background_menu_items(start_id: usize) -> Vec<SwatchMenuItem> {
+    GLOBAL_ACCELS
+        .iter()
+        .filter(|(_, action)| matches!(action, Action::SetBackground(_)))
+        .enumerate()
+        .map(move |(i, (keysym, action))| match action {
+            Action::SetBackground(color) => SwatchMenuItem {
+                swatch: *color,
+                btn: MenuButton {
+                    id: start_id + i,
+                    action: *action,
+                    accel: accel_label(*keysym),
+                    rect: RectangleInt::new(0, 0, 0, 0),
+                },
+            },
+            _ => unreachable!(),
+        })
+        .collect()
+}
+
+fn build_row_menu_item(id: usize, label: &'static str, action: Action) -> RowMenuItem {
+    let accel = GLOBAL_ACCELS
+        .iter()
+        .chain(NO_MENU_ACCELS.iter())
+        .find_map(|(keysym, a)| {
+            if *a == action {
+                Some(accel_label(*keysym))
+            } else {
+                None
+            }
+        })
+        .unwrap();
+    RowMenuItem {
+        label,
+        btn: MenuButton {
+            id,
+            action,
+            accel,
+            rect: RectangleInt::new(0, 0, 0, 0),
+        },
+    }
+}
+
+fn accel_label(keysym: Keysym) -> &'static str {
+    match keysym {
+        Keysym::space => "Space",
+        Keysym::Escape => "Esc",
+        Keysym::r => "R",
+        Keysym::g => "G",
+        Keysym::b => "B",
+        Keysym::y => "Y",
+        Keysym::m => "M",
+        Keysym::n => "N",
+        Keysym::e => "E",
+        Keysym::period => ".",
+        Keysym::comma => ",",
+        Keysym::slash => "/",
+        Keysym::c => "C",
+        Keysym::u => "U",
+        _ => keysym.name().unwrap_or("?"),
+    }
+}
+
+impl MenuComponent {
     const PADDING_X: i32 = 5;
     const PADDING_Y: i32 = 5;
     const SWATCH_SIZE: i32 = 16;
 
-    fn height(comp: &MenuComponent, ctx: &Context) -> Result<i32, cairo::Error> {
+    fn height(&self, ctx: &Context) -> Result<i32, cairo::Error> {
         let fe = ctx.font_extents()?;
         let font_height = (fe.ascent() + fe.descent()).ceil() as i32;
-        Ok(match comp {
+        Ok(match self {
             MenuComponent::Category { .. } => {
                 Self::PADDING_Y * 2 + font_height.max(Self::SWATCH_SIZE)
             }
@@ -46,17 +184,17 @@ impl Row {
         })
     }
 
-    fn calc_extents(comp: &MenuComponent, ctx: &Context) -> Result<(i32, i32), cairo::Error> {
-        match comp {
-            MenuComponent::Category { name, items } => {
+    fn calc_extents(&self, ctx: &Context) -> Result<(i32, i32), cairo::Error> {
+        match self {
+            MenuComponent::Category { name, items, .. } => {
                 let label_w =
                     Self::PADDING_X * 2 + ctx.text_extents(name)?.x_advance().ceil() as i32;
                 let btns_w = (Self::PADDING_X * 2 + Self::SWATCH_SIZE) * items.len() as i32;
-                Ok((label_w + btns_w, Self::height(comp, ctx)?))
+                Ok((label_w + btns_w, self.height(ctx)?))
             }
-            MenuComponent::Item(action) => {
-                let desc_w = ctx.text_extents(action.desc)?.x_advance().ceil() as i32;
-                let accel_w = ctx.text_extents(action.accel_label)?.x_advance().ceil() as i32;
+            MenuComponent::Item(item) => {
+                let desc_w = ctx.text_extents(item.label)?.x_advance().ceil() as i32;
+                let accel_w = ctx.text_extents(item.btn.accel)?.x_advance().ceil() as i32;
                 Ok((
                     Self::PADDING_X
                         + Self::SWATCH_SIZE
@@ -65,97 +203,65 @@ impl Row {
                         + Self::PADDING_X
                         + accel_w
                         + Self::PADDING_X,
-                    Self::height(comp, ctx)?,
+                    self.height(ctx)?,
                 ))
             }
         }
     }
 
-    fn make_row(
-        comp: &'static MenuComponent,
+    fn layout_row(
+        &mut self,
         ctx: &Context,
         menu_rect: &RectangleInt,
         row_y: i32,
-        first_button_idx: usize,
-    ) -> Result<(Self, Vec<MenuButton>, i32), cairo::Error> {
-        let row_h = Self::height(comp, ctx)?;
-        match comp {
-            MenuComponent::Category { name, items } => {
+    ) -> Result<i32, cairo::Error> {
+        let row_h = self.height(ctx)?;
+        match self {
+            MenuComponent::Category {
+                name,
+                items,
+                label_rect,
+            } => {
                 let label_text_w = ctx.text_extents(name)?.x_advance().ceil() as i32;
                 let label_w = Self::PADDING_X * 2 + label_text_w;
-                let label_rect = RectangleInt::new(menu_rect.x(), row_y, label_w, row_h);
+                *label_rect = RectangleInt::new(menu_rect.x(), row_y, label_w, row_h);
 
                 // justify buttons to the right of the label, with padding in between
                 let total_btns_w = (Self::PADDING_X * 2 + Self::SWATCH_SIZE) * items.len() as i32;
                 let mut btn_x = menu_rect.x() + menu_rect.width() - total_btns_w;
-                let mut buttons = Vec::with_capacity(items.len());
-                for action in *items {
+                for item in items {
                     let btn_w = Self::PADDING_X * 2 + Self::SWATCH_SIZE;
-                    buttons.push(MenuButton {
-                        rect: RectangleInt::new(btn_x, row_y, btn_w, row_h),
-                        action,
-                    });
+                    item.btn.rect = RectangleInt::new(btn_x, row_y, btn_w, row_h);
                     btn_x += btn_w;
                 }
-
-                Ok((
-                    Row::Category {
-                        label: name,
-                        label_rect,
-                        first_button_idx,
-                        button_count: items.len(),
-                    },
-                    buttons,
-                    row_h,
-                ))
             }
-            MenuComponent::Item(action) => {
-                let buttons = vec![MenuButton {
-                    rect: RectangleInt::new(menu_rect.x(), row_y, menu_rect.width(), row_h),
-                    action,
-                }];
-                Ok((
-                    Row::Item {
-                        button_idx: first_button_idx,
-                    },
-                    buttons,
-                    row_h,
-                ))
+            MenuComponent::Item(item) => {
+                item.btn.rect = RectangleInt::new(menu_rect.x(), row_y, menu_rect.width(), row_h);
             }
-        }
+        };
+        Ok(row_h)
     }
 
-    fn render(
-        &self,
-        ctx: &Context,
-        buttons: &[MenuButton],
-        hover: Option<usize>,
-    ) -> Result<(), cairo::Error> {
+    fn render(&self, ctx: &Context, hover: Option<usize>) -> Result<(), cairo::Error> {
         let fe = ctx.font_extents()?;
         match self {
-            Self::Category {
-                label,
+            MenuComponent::Category {
+                name,
                 label_rect,
-                first_button_idx,
-                button_count,
+                items,
             } => {
                 // Hover highlight on the hovered button (if any) in this category.
-                for (bi, btn) in buttons
-                    .iter()
-                    .enumerate()
-                    .skip(*first_button_idx)
-                    .take(*button_count)
+                if let Some(hover) = hover
+                    && let Some(item) = items.iter().find(|item| item.btn.id == hover)
                 {
-                    if hover == Some(bi) {
-                        ctx.set_source_rgb(0.2, 0.2, 0.2);
-                        ctx.rectangle(
-                            btn.rect.x() as f64,
-                            btn.rect.y() as f64,
-                            btn.rect.width() as f64,
-                            btn.rect.height() as f64,
-                        );
-                        ctx.fill()?;
-                    }
+                    ctx.set_source_rgb(0.2, 0.2, 0.2);
+                    ctx.rectangle(
+                        item.btn.rect.x() as f64,
+                        item.btn.rect.y() as f64,
+                        item.btn.rect.width() as f64,
+                        item.btn.rect.height() as f64,
+                    );
+                    ctx.fill()?;
                 }
 
                 let baseline_y = label_rect.y() as f64 + Self::PADDING_Y as f64 + fe.ascent();
@@ -163,18 +269,17 @@ impl Row {
                 // Category label (non-interactive).
                 ctx.set_source_rgb(0.9, 0.9, 0.9);
                 ctx.move_to(label_rect.x() as f64 + Self::PADDING_X as f64, baseline_y);
-                ctx.show_text(label)?;
+                ctx.show_text(name)?;
 
                 // Each button: swatch + accel label.
-                for btn in buttons.iter().skip(*first_button_idx).take(*button_count) {
-                    let br = btn.rect;
-                    let action = btn.action;
+                for item in items {
+                    let br = item.btn.rect;
 
                     let swatch_x = br.x() as f64 + Self::PADDING_X as f64;
                     let swatch_y =
                         br.y() as f64 + (br.height() as f64 - Self::SWATCH_SIZE as f64) / 2.0;
 
-                    let color = action.swatch().unwrap();
+                    let color = item.swatch;
                     if color.a > 0 {
                         ctx.set_source_rgb(
                             color.r as f64 / 255.0,
@@ -202,45 +307,46 @@ impl Row {
                     }
 
                     // center the accel label under the swatch
-                    let extents = ctx.text_extents(action.accel_label)?;
+                    let extents = ctx.text_extents(item.btn.accel)?;
                     ctx.move_to(
                         swatch_x + (Self::SWATCH_SIZE as f64 - extents.x_advance()) / 2.0,
                         baseline_y,
                     );
-                    ctx.show_text(action.accel_label)?;
+                    ctx.show_text(item.btn.accel)?;
                 }
             }
-            Self::Item { button_idx } => {
-                let btn = &buttons[*button_idx];
-
+            MenuComponent::Item(item) => {
                 // Hover highlight for this row.
-                if hover == Some(*button_idx) {
+                if hover == Some(item.btn.id) {
                     ctx.set_source_rgb(0.2, 0.2, 0.2);
                     ctx.rectangle(
-                        btn.rect.x() as f64,
-                        btn.rect.y() as f64,
-                        btn.rect.width() as f64,
-                        btn.rect.height() as f64,
+                        item.btn.rect.x() as f64,
+                        item.btn.rect.y() as f64,
+                        item.btn.rect.width() as f64,
+                        item.btn.rect.height() as f64,
                     );
                     ctx.fill()?;
                 }
 
                 // Description text.
-                let baseline_y = btn.rect.y() as f64 + Self::PADDING_Y as f64 + fe.ascent();
+                let baseline_y = item.btn.rect.y() as f64 + Self::PADDING_Y as f64 + fe.ascent();
                 ctx.set_source_rgb(0.9, 0.9, 0.9);
-                ctx.move_to(btn.rect.x() as f64 + Self::PADDING_X as f64, baseline_y);
-                ctx.show_text(btn.action.desc)?;
+                ctx.move_to(
+                    item.btn.rect.x() as f64 + Self::PADDING_X as f64,
+                    baseline_y,
+                );
+                ctx.show_text(item.label)?;
 
                 // Accel label, right-aligned.
                 ctx.set_source_rgb(0.7, 0.7, 0.7);
-                let accel_adv = ctx.text_extents(btn.action.accel_label)?.x_advance();
+                let accel_adv = ctx.text_extents(item.btn.accel)?.x_advance();
                 ctx.move_to(
-                    btn.rect.x() as f64 + btn.rect.width() as f64
+                    item.btn.rect.x() as f64 + item.btn.rect.width() as f64
                         - Self::PADDING_X as f64
                         - accel_adv,
                     baseline_y,
                 );
-                ctx.show_text(btn.action.accel_label)?;
+                ctx.show_text(item.btn.accel)?;
             }
         }
         Ok(())
@@ -268,28 +374,23 @@ impl Row {
 }
 
 pub struct ContextMenu {
-    hover: Option<usize>, // flat index into `buttons`
-    in_menu: bool,        // pointer is within the menu bounding rect (but not necessarily a button)
-    rows: Vec<Row>,
-    buttons: Vec<MenuButton>,
+    components: Vec<MenuComponent>,
+    hover: Option<usize>,
     rect: RectangleInt,
 }
 
 impl ContextMenu {
-    pub fn new(
-        pos: Point,
-        menu: &'static [MenuComponent],
-        screen_width: i32,
-        screen_height: i32,
-    ) -> Result<Self, cairo::Error> {
+    pub fn new(pos: Point, screen_width: i32, screen_height: i32) -> Result<Self, cairo::Error> {
         let dummy = UI::dummy_surface()?;
         let ctx = UI::make_ctx(&dummy)?;
+
+        let mut menu = build_menu();
 
         // First pass: compute the menu size
         let mut menu_w = 0;
         let mut menu_h = 0;
-        for comp in menu {
-            let (w, h) = Row::calc_extents(comp, &ctx)?;
+        for comp in menu.iter() {
+            let (w, h) = comp.calc_extents(&ctx)?;
             menu_w = menu_w.max(w);
             menu_h += h;
         }
@@ -298,26 +399,17 @@ impl ContextMenu {
             Self::calc_origin(pos, menu_w, menu_h, screen_width, screen_height);
         let menu_rect = RectangleInt::new(origin_x, origin_y, menu_w, menu_h);
 
-        // Second pass: build rows and buttons with absolute screen positions.
-        let mut rows = Vec::with_capacity(menu.len());
-        let mut buttons: Vec<MenuButton> = Vec::new();
+        // Second pass: layout elements
         {
             let mut row_y = origin_y;
-            for comp in menu {
-                let first_button_idx = buttons.len();
-                let (row, row_buttons, row_h) =
-                    Row::make_row(comp, &ctx, &menu_rect, row_y, first_button_idx)?;
-                rows.push(row);
-                buttons.extend(row_buttons);
-                row_y += row_h;
+            for comp in menu.iter_mut() {
+                row_y += comp.layout_row(&ctx, &menu_rect, row_y)?;
             }
         }
 
         Ok(Self {
+            components: menu,
             hover: None,
-            in_menu: false,
-            rows,
-            buttons,
             rect: menu_rect,
         })
     }
@@ -334,9 +426,9 @@ impl ContextMenu {
         let draw_above = pos.y as i32 + menu_h > screen_h;
         // shift some px to avoid overlapping the cursor
         let mut y = if draw_above {
-            pos.y as i32 - menu_h - Row::PADDING_Y
+            pos.y as i32 - menu_h - MenuComponent::PADDING_Y
         } else {
-            pos.y as i32 + Row::PADDING_Y
+            pos.y as i32 + MenuComponent::PADDING_Y
         };
         if y < 0 {
             y = 0;
@@ -362,44 +454,52 @@ impl ContextMenu {
         );
         ctx.fill()?;
 
-        for row in &self.rows {
-            row.render(ctx, &self.buttons, self.hover)?;
+        for comp in self.components.iter() {
+            comp.render(ctx, self.hover)?;
         }
         Ok(())
+    }
+
+    /// Returns an iterator of MenuButtons
+    fn buttons(&self) -> impl Iterator<Item = &MenuButton> {
+        self.components.iter().flat_map(|comp| match comp {
+            MenuComponent::Category { items, .. } => items.iter().map(|item| &item.btn).collect(),
+            MenuComponent::Item(item) => vec![&item.btn],
+        })
     }
 
     /// Update the hovered button based on the pointer position.
     /// Returns true if the hover state changed (including entering/leaving the menu area).
     pub fn update_hover(&mut self, pos: Point) -> bool {
         let new_hover = self
-            .buttons
-            .iter()
-            .position(|btn| rect_contains(btn.rect, pos.x as i32, pos.y as i32));
-        let new_in_menu = rect_contains(self.rect, pos.x as i32, pos.y as i32);
-        if new_hover != self.hover || new_in_menu != self.in_menu {
+            .buttons()
+            .position(|btn| btn.hit(pos.x as i32, pos.y as i32));
+        if new_hover != self.hover {
             self.hover = new_hover;
-            self.in_menu = new_in_menu;
             true
         } else {
             false
         }
     }
-}
 
-fn rect_contains(rect: RectangleInt, x: i32, y: i32) -> bool {
-    x >= rect.x() && x < rect.x() + rect.width() && y >= rect.y() && y < rect.y() + rect.height()
+    fn selected_button(&self) -> Option<&MenuButton> {
+        self.buttons().find(|btn| Some(btn.id) == self.hover)
+    }
+
+    fn selected_action(&self) -> Option<Action> {
+        self.selected_button().map(|btn| btn.action)
+    }
 }
 
 pub struct UI {
     surface: ImageSurface,
     context_menu: Option<ContextMenu>,
     last_pointer_pos: Option<Point>,
-    menu: &'static [MenuComponent],
 }
 
 impl UI {
     const FONT_SIZE: f64 = 14.0;
-    const FONT_FAMILY: &'static str = ""; // use the default font
+    const FONT_FAMILY: &str = ""; // use the default font
     const FONT_SLANT: FontSlant = FontSlant::Normal;
     const FONT_WEIGHT: FontWeight = FontWeight::Normal;
 
@@ -416,16 +516,11 @@ impl UI {
         Ok(ctx)
     }
 
-    pub fn new(
-        width: i32,
-        height: i32,
-        menu: &'static [MenuComponent],
-    ) -> Result<Self, cairo::Error> {
+    pub fn new(width: i32, height: i32) -> Result<Self, cairo::Error> {
         Ok(Self {
             surface: ImageSurface::create(Format::ARgb32, width, height)?,
             context_menu: None,
             last_pointer_pos: None,
-            menu,
         })
     }
 
@@ -437,13 +532,12 @@ impl UI {
         &mut self,
         pos: Point,
         btn: InputButton,
-    ) -> Result<(Option<Op>, bool), cairo::Error> {
+    ) -> Result<(Option<Action>, bool), cairo::Error> {
         let Some(mut menu) = self.context_menu.take() else {
             if btn == InputButton::Secondary {
                 // Open the context menu.
                 self.context_menu = Some(ContextMenu::new(
                     pos,
-                    self.menu,
                     self.surface.width(),
                     self.surface.height(),
                 )?);
@@ -456,15 +550,15 @@ impl UI {
         // Menu was open: close it and trigger the action under the cursor (if any).
         menu.update_hover(pos);
         self.render()?;
-        Ok((menu.hover.map(|idx| menu.buttons[idx].action.op), true))
+        Ok((menu.selected_action(), true))
     }
 
     pub fn on_pointer_button_released(
         &mut self,
         pos: Point,
         btn: InputButton,
-    ) -> Result<(Option<Op>, bool), cairo::Error> {
-        let op = {
+    ) -> Result<(Option<Action>, bool), cairo::Error> {
+        let action = {
             let Some(menu) = self.context_menu.as_mut() else {
                 // No menu open — nothing to do.
                 return Ok((None, false));
@@ -472,7 +566,7 @@ impl UI {
             let _ = menu.update_hover(pos);
             if btn == InputButton::Secondary {
                 // Right-click release: trigger the action under the cursor (if any).
-                menu.hover.map(|idx| menu.buttons[idx].action.op)
+                menu.selected_action()
             } else {
                 // Other button release: close menu without triggering an action.
                 None
@@ -480,11 +574,11 @@ impl UI {
         };
 
         // Close the menu if an action was triggered
-        if op.is_some() {
+        if action.is_some() {
             self.context_menu = None;
         }
         self.render()?;
-        Ok((op, true))
+        Ok((action, true))
     }
 
     pub fn on_pointer_motion(&mut self, pos: Point) -> Result<bool, cairo::Error> {
@@ -512,19 +606,92 @@ impl UI {
         Ok(())
     }
 
-    pub fn toggle_context_menu(&mut self) -> Result<(), cairo::Error> {
-        if self.context_menu.is_some() {
-            self.context_menu = None;
-        } else {
+    pub fn open_context_menu(&mut self) -> Result<(), cairo::Error> {
+        if self.context_menu.is_none() {
             let pos = self.last_pointer_pos.unwrap_or(Point { x: 0.0, y: 0.0 });
             self.context_menu = Some(ContextMenu::new(
                 pos,
-                self.menu,
                 self.surface.width(),
                 self.surface.height(),
             )?);
+            self.render()?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn focus_menu_item(
+        &mut self,
+        direction: FocusDirection,
+    ) -> Result<(), cairo::Error> {
+        let Some(menu) = self.context_menu.as_mut() else {
+            // No menu open — nothing to focus.
+            return Ok(());
+        };
+        let current = menu.selected_button();
+        // find the next one in the given direction, wrapping around if necessary
+        let next = match current {
+            Some(current) => {
+                let btns = menu.buttons().filter(|btn| btn.id != current.id);
+                match direction {
+                    FocusDirection::Up => {
+                        // find the button with a rect that is right above
+                        btns.filter(|btn| current.dy(btn) < 0)
+                            .min_by_key(|btn| (-current.dy(btn), current.dx(btn).abs()))
+                            .or_else(|| {
+                                // if there isn't one, wrap around to the bottom-most button
+                                menu.buttons()
+                                    .max_by_key(|btn| (btn.rect.y(), btn.rect.x()))
+                            })
+                    }
+                    FocusDirection::Down => {
+                        // find the button with a rect that is right below
+                        btns.filter(|btn| current.dy(btn) > 0)
+                            .min_by_key(|btn| (current.dy(btn), current.dx(btn).abs()))
+                            .or_else(|| {
+                                // if there isn't one, wrap around to the top-most button
+                                menu.buttons()
+                                    .min_by_key(|btn| (btn.rect.y(), btn.rect.x()))
+                            })
+                    }
+                    FocusDirection::Left => {
+                        // find the button with a rect that is right to the left
+                        btns.filter(|btn| current.dx(btn) < 0)
+                            .min_by_key(|btn| (-current.dx(btn), current.dy(btn).abs()))
+                            .or_else(|| {
+                                // if there isn't one, wrap around to the right-most button
+                                menu.buttons()
+                                    .max_by_key(|btn| (btn.rect.x(), btn.rect.y()))
+                            })
+                    }
+                    FocusDirection::Right => {
+                        // find the button with a rect that is right to the right
+                        btns.filter(|btn| current.dx(btn) > 0)
+                            .min_by_key(|btn| (current.dx(btn), current.dy(btn).abs()))
+                            .or_else(|| {
+                                // if there isn't one, wrap around to the left-most button
+                                menu.buttons()
+                                    .min_by_key(|btn| (btn.rect.x(), btn.rect.y()))
+                            })
+                    }
+                }
+            }
+            None => match direction {
+                FocusDirection::Up | FocusDirection::Left => menu.buttons().last(),
+                FocusDirection::Down | FocusDirection::Right => menu.buttons().next(),
+            },
+        };
+        if let Some(next) = next {
+            menu.hover = Some(next.id);
         }
         self.render()?;
+        Ok(())
+    }
+
+    pub fn close_context_menu(&mut self) -> Result<(), cairo::Error> {
+        if self.context_menu.is_some() {
+            self.context_menu = None;
+            self.render()?;
+        }
         Ok(())
     }
 
@@ -534,5 +701,11 @@ impl UI {
 
     pub(crate) fn context_menu_rect(&self) -> Option<RectangleInt> {
         self.context_menu.as_ref().map(|menu| menu.rect)
+    }
+
+    pub(crate) fn get_menu_selection(&self) -> Option<Action> {
+        self.context_menu
+            .as_ref()
+            .and_then(|menu| menu.selected_action())
     }
 }

@@ -20,6 +20,9 @@ impl Color {
     }
 
     pub fn luma(&self) -> f64 {
+        if self.a == 0 {
+            return 1.0;
+        }
         0.2126 * (self.r as f64 / 255.0)
             + 0.7152 * (self.g as f64 / 255.0)
             + 0.0722 * (self.b as f64 / 255.0)
@@ -35,9 +38,9 @@ impl Color {
     pub const WHITE: Color = Self::rgb(255, 255, 255);
     pub const TRANSPARENT: Color = Self {
         a: 0,
-        r: 255,
-        g: 255,
-        b: 255,
+        r: 0,
+        g: 0,
+        b: 0,
     };
 }
 

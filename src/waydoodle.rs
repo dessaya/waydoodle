@@ -2,7 +2,7 @@ use cairo::RectangleInt;
 use smithay_client_toolkit::seat::keyboard::Keysym;
 
 use crate::{
-    actions::{self, Op, all_actions},
+    actions::{Action, GLOBAL_ACCELS, MENU_ACCELS, NO_MENU_ACCELS},
     canvas::{Canvas, Color, Point},
     ui::UI,
 };
@@ -65,8 +65,7 @@ pub(crate) struct Stroke {
 #[derive(Debug)]
 pub(crate) enum HistoryItem {
     Stroke(Stroke),
-    Clear,
-    SetBackground(Color),
+    Clear(Color),
 }
 
 pub(crate) struct OverlayState {
@@ -88,7 +87,7 @@ impl OverlayState {
             primary_tool: Tool::default(),
             override_tool: None,
             history: Vec::new(),
-            ui: UI::new(width, height, actions::CONTEXT_MENU)?,
+            ui: UI::new(width, height)?,
         })
     }
 
@@ -96,49 +95,57 @@ impl OverlayState {
         self.override_tool.unwrap_or(self.primary_tool)
     }
 
-    // Returns (keep_open, redraw)
-    fn apply_op(&mut self, op: Op) -> (bool, bool) {
-        match op {
-            Op::SetTool(tool) => {
+    // Returns keep_open
+    fn apply_action(&mut self, action: Action) -> bool {
+        match action {
+            Action::SetTool(tool) => {
                 self.primary_tool = tool;
-                (true, false)
+                self.ui.close_context_menu().unwrap();
+                true
             }
-            Op::Clear => {
-                self.canvas.clear();
-                self.history.push(HistoryItem::Clear);
-                (true, true)
+            Action::Clear => {
+                self.canvas.fill(self.background_color);
+                self.history.push(HistoryItem::Clear(self.background_color));
+                self.ui.close_context_menu().unwrap();
+                true
             }
-            Op::SetBackground(color) => {
+            Action::SetBackground(color) => {
                 if self.background_color != color {
-                    self.history.push(HistoryItem::SetBackground(color));
                     self.background_color = color;
                     self.canvas.fill(self.background_color);
-                    (true, true)
-                } else {
-                    (true, false)
+                    self.history.push(HistoryItem::Clear(self.background_color));
                 }
+                self.ui.close_context_menu().unwrap();
+                true
             }
-            Op::Undo => {
+            Action::Undo => {
                 if self.history.pop().is_some() {
                     self.canvas.clear();
                     self.replay_history();
-                    (true, true)
-                } else {
-                    (true, false)
                 }
+                self.ui.close_context_menu().unwrap();
+                true
             }
-            Op::ToggleContextMenu => {
-                self.ui.toggle_context_menu().unwrap();
-                (true, true)
+            Action::OpenContextMenu => {
+                self.ui.open_context_menu().unwrap();
+                true
             }
-            Op::HideOverlay => {
-                if self.ui.is_context_menu_open() {
-                    self.ui.toggle_context_menu().unwrap();
-                    (true, true)
-                } else {
-                    (false, false)
+            Action::CloseContextMenu => {
+                self.ui.close_context_menu().unwrap();
+                true
+            }
+            Action::Focus(direction) => {
+                self.ui.focus_menu_item(direction).unwrap();
+                true
+            }
+            Action::ApplyMenuSelection => {
+                if let Some(action) = self.ui.get_menu_selection() {
+                    self.apply_action(action);
                 }
+                self.ui.close_context_menu().unwrap();
+                true
             }
+            Action::HideOverlay => false,
         }
     }
 
@@ -159,23 +166,37 @@ impl OverlayState {
                         }
                     }
                 }
-                HistoryItem::Clear => {
-                    self.canvas.clear();
-                }
-                HistoryItem::SetBackground(to) => {
-                    self.canvas.fill(*to);
+                HistoryItem::Clear(color) => {
+                    self.canvas.fill(*color);
                 }
             }
         }
     }
 
+    fn match_accel(&self, keysym: Keysym) -> Option<Action> {
+        GLOBAL_ACCELS
+            .iter()
+            .chain(if self.ui.is_context_menu_open() {
+                MENU_ACCELS.iter()
+            } else {
+                NO_MENU_ACCELS.iter()
+            })
+            .find_map(|(accel_keysym, action)| {
+                if *accel_keysym == keysym {
+                    Some(*action)
+                } else {
+                    None
+                }
+            })
+    }
+
     // Returns (keep_open, redraw, cursor)
     pub fn on_key_pressed(&mut self, keysym: Keysym) -> (bool, bool, CursorShape) {
-        let Some(info) = all_actions().find(|i| i.accel == keysym) else {
+        let Some(action) = self.match_accel(keysym) else {
             return (true, false, self.current_tool().cursor_shape());
         };
-        let (keep_open, redraw) = self.apply_op(info.op);
-        (keep_open, redraw, self.current_tool().cursor_shape())
+        let keep_open = self.apply_action(action);
+        (keep_open, true, self.current_tool().cursor_shape())
     }
 
     pub fn on_pointer_enter(&mut self) -> CursorShape {
@@ -192,9 +213,9 @@ impl OverlayState {
         pos: Point,
         btn: InputButton,
     ) -> (bool, bool, CursorShape) {
-        let (op, handled) = self.ui.on_pointer_button_pressed(pos, btn).unwrap();
-        if let Some(op) = op {
-            let (keep_open, _) = self.apply_op(op);
+        let (action, handled) = self.ui.on_pointer_button_pressed(pos, btn).unwrap();
+        if let Some(action) = action {
+            let keep_open = self.apply_action(action);
             return (keep_open, true, self.current_tool().cursor_shape());
         }
         if handled {
@@ -217,9 +238,9 @@ impl OverlayState {
         pos: Point,
         btn: InputButton,
     ) -> (bool, bool, CursorShape) {
-        let (op, handled) = self.ui.on_pointer_button_released(pos, btn).unwrap();
-        if let Some(op) = op {
-            let (keep_open, _) = self.apply_op(op);
+        let (action, handled) = self.ui.on_pointer_button_released(pos, btn).unwrap();
+        if let Some(action) = action {
+            let keep_open = self.apply_action(action);
             return (keep_open, true, self.current_tool().cursor_shape());
         }
         if handled {
@@ -277,20 +298,23 @@ impl OverlayState {
     }
 }
 
-pub(crate) trait App<O> {
+pub(crate) enum OverlayStatus {
+    None,
+    Pending,
+    Ready,
+}
+
+pub(crate) trait OverlayController {
+    fn overlay_status(&self) -> OverlayStatus;
     fn create_overlay(&mut self);
     fn destroy_overlay(&mut self);
     fn toggle_focus_or_destroy_overlay(&mut self);
 
-    // Returns Some(Some(overlay)) if the overlay is active, Some(None) if it's
-    // in the process of being created, and None if it doesn't exist at all.
-    fn get_overlay(&self) -> Option<Option<&O>>;
-
     fn on_toggle_overlay(&mut self) {
-        match self.get_overlay() {
-            None => self.create_overlay(),
-            Some(None) => (),
-            Some(Some(_)) => self.toggle_focus_or_destroy_overlay(),
+        match self.overlay_status() {
+            OverlayStatus::None => self.create_overlay(),
+            OverlayStatus::Pending => (),
+            OverlayStatus::Ready => self.toggle_focus_or_destroy_overlay(),
         }
     }
 }
@@ -325,7 +349,15 @@ mod tests {
         }
     }
 
-    impl App<OverlayState> for MockApp {
+    impl OverlayController for MockApp {
+        fn overlay_status(&self) -> OverlayStatus {
+            match self.overlay {
+                None => OverlayStatus::None,
+                Some(None) => OverlayStatus::Pending,
+                Some(Some(_)) => OverlayStatus::Ready,
+            }
+        }
+
         fn create_overlay(&mut self) {
             self.overlay = Some(Some(OverlayState::new(TEST_WIDTH, TEST_HEIGHT).unwrap()));
         }
@@ -336,10 +368,6 @@ mod tests {
 
         fn toggle_focus_or_destroy_overlay(&mut self) {
             self.destroy_overlay();
-        }
-
-        fn get_overlay(&self) -> Option<Option<&OverlayState>> {
-            self.overlay.as_ref().map(|o| o.as_ref())
         }
     }
 
@@ -392,7 +420,7 @@ mod tests {
         overlay.primary_tool = Tool::Eraser;
         let (keep, redraw, shape) = overlay.on_key_pressed(Keysym::r);
         assert!(keep);
-        assert!(!redraw);
+        assert!(redraw);
         assert_eq!(shape, CursorShape::Crosshair);
         assert_eq!(overlay.primary_tool, Tool::Pen(Color::RED));
     }
@@ -402,7 +430,7 @@ mod tests {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT).unwrap();
         let (keep, redraw, shape) = overlay.on_key_pressed(Keysym::e);
         assert!(keep);
-        assert!(!redraw);
+        assert!(redraw);
         assert_eq!(shape, CursorShape::Circle);
         assert_eq!(overlay.primary_tool, Tool::Eraser);
     }
@@ -439,7 +467,7 @@ mod tests {
         let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT).unwrap();
         let (keep, redraw, _) = overlay.on_key_pressed(Keysym::Escape);
         assert!(!keep);
-        assert!(!redraw);
+        assert!(redraw);
     }
 
     #[test]
@@ -583,11 +611,11 @@ mod tests {
     #[test]
     fn toggle_overlay_when_none_creates_overlay() {
         let mut app = MockApp::new();
-        assert!(app.get_overlay().is_none());
+        assert!(app.overlay.is_none());
 
         app.on_toggle_overlay();
 
-        let overlay = app.get_overlay();
+        let overlay = app.overlay;
         assert!(overlay.is_some());
         assert!(overlay.unwrap().is_some());
     }
@@ -595,21 +623,21 @@ mod tests {
     #[test]
     fn toggle_overlay_when_pending_does_nothing() {
         let mut app = MockApp::with_pending();
-        assert!(matches!(app.get_overlay(), Some(None)));
+        assert!(matches!(app.overlay_status(), OverlayStatus::Pending));
 
         app.on_toggle_overlay();
 
-        assert!(matches!(app.get_overlay(), Some(None)));
+        assert!(matches!(app.overlay_status(), OverlayStatus::Pending));
     }
 
     #[test]
     fn toggle_overlay_when_ready_destroys_overlay() {
         let mut app = MockApp::with_overlay();
-        assert!(matches!(app.get_overlay(), Some(Some(_))));
+        assert!(matches!(app.overlay_status(), OverlayStatus::Ready));
 
         app.on_toggle_overlay();
 
-        assert!(app.get_overlay().is_none());
+        assert!(matches!(app.overlay_status(), OverlayStatus::None));
     }
 
     #[test]
@@ -813,18 +841,20 @@ mod tests {
         assert!(redraw);
         assert!(overlay.ui.is_context_menu_open());
 
-        // Move the pointer a few pixels down & right
-        let damage = overlay
-            .on_pointer_motion(Point { x: 15.0, y: 15.0 })
-            .unwrap_or_else(|| {
-                panic!("expected Some from pointer motion while context menu is open")
-            });
+        // hover some menu item
+        let rect = overlay.ui.context_menu_rect().unwrap();
+        let point = Point {
+            x: rect.x() as f64 + rect.width() as f64 - 5.0,
+            y: rect.y() as f64 + 5.0,
+        };
+        let damage = overlay.on_pointer_motion(point).unwrap_or_else(|| {
+            panic!("expected Some from pointer motion while context menu is open")
+        });
         assert!(damage.width() > 0);
 
         // Release the button.
         // Some op should be triggered, and the menu should close.
-        let (keep, redraw, _) =
-            overlay.on_pointer_button_released(Point { x: 15.0, y: 15.0 }, InputButton::Secondary);
+        let (keep, redraw, _) = overlay.on_pointer_button_released(point, InputButton::Secondary);
         assert!(keep);
         assert!(redraw);
         assert!(!overlay.ui.is_context_menu_open());

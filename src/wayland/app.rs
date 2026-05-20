@@ -19,8 +19,8 @@ use wayland_protocols::wp::tablet::zv2::client::zwp_tablet_manager_v2;
 use super::{WaylandState, cursors::Cursors};
 use crate::{
     tray::{TrayEvent, WaydoodleTray},
-    waydoodle::{App as _, CursorShape},
-    wayland::{App, OverlayState},
+    waydoodle::{CursorShape, OverlayController},
+    wayland::{App, OverlayStatus},
 };
 
 impl App {
@@ -161,7 +161,7 @@ impl App {
         redraw: bool,
         shape: CursorShape,
     ) {
-        let Some(OverlayState::Ready(overlay)) = self.overlay.as_mut() else {
+        let Some(OverlayStatus::Ready(overlay)) = self.overlay.as_mut() else {
             return;
         };
         if !keep_open {
