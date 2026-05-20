@@ -1,5 +1,7 @@
 use cairo::{Context, ImageSurface, ImageSurfaceData, RectangleInt};
 
+use crate::waydoodle::Result;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Point {
     pub x: f64,
@@ -49,10 +51,9 @@ pub(crate) struct Canvas {
 }
 
 impl Canvas {
-    pub fn new(width: i32, height: i32) -> Self {
-        let surface = ImageSurface::create(cairo::Format::ARgb32, width, height)
-            .expect("failed to create canvas surface");
-        Self { surface }
+    pub fn new(width: i32, height: i32) -> Result<Self> {
+        let surface = ImageSurface::create(cairo::Format::ARgb32, width, height)?;
+        Ok(Self { surface })
     }
 
     pub fn rect(&self) -> RectangleInt {
@@ -96,18 +97,18 @@ impl Canvas {
         ctx.set_operator(cairo::Operator::Source);
     }
 
-    pub fn clear(&mut self) -> RectangleInt {
-        let ctx = Context::new(&self.surface).expect("failed to create canvas context");
+    pub fn clear(&mut self) -> Result<RectangleInt> {
+        let ctx = Context::new(&self.surface)?;
         Self::set_source_rgba(&ctx, Color::TRANSPARENT);
-        ctx.paint().expect("failed to fill canvas");
-        RectangleInt::new(0, 0, self.width(), self.height())
+        ctx.paint()?;
+        Ok(RectangleInt::new(0, 0, self.width(), self.height()))
     }
 
-    pub fn fill(&mut self, color: Color) -> RectangleInt {
-        let ctx = Context::new(&self.surface).expect("failed to create canvas context");
+    pub fn fill(&mut self, color: Color) -> Result<RectangleInt> {
+        let ctx = Context::new(&self.surface)?;
         Self::set_source_rgba(&ctx, color);
-        ctx.paint().expect("failed to fill canvas");
-        RectangleInt::new(0, 0, self.width(), self.height())
+        ctx.paint()?;
+        Ok(RectangleInt::new(0, 0, self.width(), self.height()))
     }
 
     fn extents_to_rect(&self, extents: (f64, f64, f64, f64)) -> RectangleInt {
@@ -120,29 +121,40 @@ impl Canvas {
         )
     }
 
-    pub fn draw_circle(&mut self, center: Point, radius: f64, color: Color) -> RectangleInt {
-        let ctx = Context::new(&self.surface).expect("failed to create canvas context");
+    pub fn draw_circle(
+        &mut self,
+        center: Point,
+        radius: f64,
+        color: Color,
+    ) -> Result<RectangleInt> {
+        let ctx = Context::new(&self.surface)?;
         Self::set_source_rgba(&ctx, color);
         ctx.arc(center.x, center.y, radius, 0.0, std::f64::consts::TAU);
-        let extents = ctx.fill_extents().expect("failed to get circle extents");
-        ctx.fill().expect("failed to fill circle");
-        self.extents_to_rect(extents)
+        let extents = ctx.fill_extents()?;
+        ctx.fill()?;
+        Ok(self.extents_to_rect(extents))
     }
 
-    pub fn draw_line(&mut self, from: Point, to: Point, radius: f64, color: Color) -> RectangleInt {
+    pub fn draw_line(
+        &mut self,
+        from: Point,
+        to: Point,
+        radius: f64,
+        color: Color,
+    ) -> Result<RectangleInt> {
         if from == to {
             return self.draw_circle(from, radius, color);
         }
-        let ctx = Context::new(&self.surface).expect("failed to create canvas context");
+        let ctx = Context::new(&self.surface)?;
         Self::set_source_rgba(&ctx, color);
         ctx.set_line_width(radius * 2.0);
         ctx.set_line_cap(cairo::LineCap::Round);
         ctx.new_path();
         ctx.move_to(from.x, from.y);
         ctx.line_to(to.x, to.y);
-        let extents = ctx.stroke_extents().expect("failed to get line extents");
-        ctx.stroke().expect("failed to stroke line");
-        self.extents_to_rect(extents)
+        let extents = ctx.stroke_extents()?;
+        ctx.stroke()?;
+        Ok(self.extents_to_rect(extents))
     }
 
     pub(crate) fn surface_data(&'_ mut self) -> ImageSurfaceData<'_> {
@@ -159,14 +171,14 @@ mod tests {
     // -------------------------------------------------------
 
     #[test]
-    fn clear_fills_buffer_with_zeros_and_returns_full_rect() {
+    fn clear_fills_buffer_with_zeros_and_returns_full_rect() -> Result<()> {
         let w = 10;
         let h = 8;
-        let mut canvas = Canvas::new(w, h);
+        let mut canvas = Canvas::new(w, h)?;
 
-        canvas.fill(Color::RED);
+        canvas.fill(Color::RED)?;
 
-        let damage = canvas.clear();
+        let damage = canvas.clear()?;
         assert_eq!(damage.x(), 0);
         assert_eq!(damage.y(), 0);
         assert_eq!(damage.width(), w);
@@ -177,6 +189,7 @@ mod tests {
                 assert_eq!(canvas.pixel_at(x, y), Color::TRANSPARENT);
             }
         }
+        Ok(())
     }
 
     // -------------------------------------------------------
@@ -184,12 +197,12 @@ mod tests {
     // -------------------------------------------------------
 
     #[test]
-    fn fill_sets_all_pixels_to_given_color_and_returns_full_rect() {
+    fn fill_sets_all_pixels_to_given_color_and_returns_full_rect() -> Result<()> {
         let w = 10;
         let h = 8;
-        let mut canvas = Canvas::new(w, h);
+        let mut canvas = Canvas::new(w, h)?;
 
-        let damage = canvas.fill(Color::RED);
+        let damage = canvas.fill(Color::RED)?;
         assert_eq!(damage.x(), 0);
         assert_eq!(damage.y(), 0);
         assert_eq!(damage.width(), w);
@@ -200,6 +213,7 @@ mod tests {
                 assert_eq!(canvas.pixel_at(x, y), Color::RED);
             }
         }
+        Ok(())
     }
 
     // -------------------------------------------------------
@@ -207,75 +221,79 @@ mod tests {
     // -------------------------------------------------------
 
     #[test]
-    fn draw_circle_center_pixel_is_filled() {
+    fn draw_circle_center_pixel_is_filled() -> Result<()> {
         let w = 20;
         let h = 20;
-        let mut canvas = Canvas::new(w, h);
+        let mut canvas = Canvas::new(w, h)?;
 
         let center = Point { x: 10.0, y: 10.0 };
         let radius = 5.0;
-        canvas.draw_circle(center, radius, Color::RED);
+        canvas.draw_circle(center, radius, Color::RED)?;
 
         assert_eq!(canvas.pixel_at(10, 10), Color::RED);
+        Ok(())
     }
 
     #[test]
-    fn draw_circle_pixels_at_cardinal_offsets_within_radius_are_filled() {
+    fn draw_circle_pixels_at_cardinal_offsets_within_radius_are_filled() -> Result<()> {
         let w = 30;
         let h = 30;
-        let mut canvas = Canvas::new(w, h);
+        let mut canvas = Canvas::new(w, h)?;
 
         let center = Point { x: 15.0, y: 15.0 };
         let radius = 5.0;
-        canvas.draw_circle(center, radius, Color::RED);
+        canvas.draw_circle(center, radius, Color::RED)?;
 
         // Points along axes at distance 2 from center — well within radius 5 — should be fully covered.
         assert_eq!(canvas.pixel_at(15, 13), Color::RED); // 2 pixels above center
         assert_eq!(canvas.pixel_at(15, 17), Color::RED); // 2 pixels below center
         assert_eq!(canvas.pixel_at(13, 15), Color::RED); // 2 pixels left
         assert_eq!(canvas.pixel_at(17, 15), Color::RED); // 2 pixels right
+        Ok(())
     }
 
     #[test]
-    fn draw_circle_pixels_well_outside_radius_are_transparent() {
+    fn draw_circle_pixels_well_outside_radius_are_transparent() -> Result<()> {
         let w = 30;
         let h = 30;
-        let mut canvas = Canvas::new(w, h);
+        let mut canvas = Canvas::new(w, h)?;
 
         let center = Point { x: 15.0, y: 15.0 };
         let radius = 5.0;
-        canvas.draw_circle(center, radius, Color::RED);
+        canvas.draw_circle(center, radius, Color::RED)?;
 
         assert_eq!(canvas.pixel_at(0, 0), Color::TRANSPARENT);
         assert_eq!(canvas.pixel_at(15, 0), Color::TRANSPARENT);
         assert_eq!(canvas.pixel_at(29, 29), Color::TRANSPARENT);
+        Ok(())
     }
 
     #[test]
-    fn draw_circle_returns_correct_damage_rect() {
+    fn draw_circle_returns_correct_damage_rect() -> Result<()> {
         let w = 30;
         let h = 30;
-        let mut canvas = Canvas::new(w, h);
+        let mut canvas = Canvas::new(w, h)?;
 
         let center = Point { x: 15.0, y: 15.0 };
         let radius = 5.0;
-        let damage = canvas.draw_circle(center, radius, Color::RED);
+        let damage = canvas.draw_circle(center, radius, Color::RED)?;
 
         assert!(damage.x() <= 10);
         assert!(damage.y() <= 10);
         assert!(damage.x() + damage.width() >= 20);
         assert!(damage.y() + damage.height() >= 20);
+        Ok(())
     }
 
     #[test]
-    fn draw_circle_clipped_at_edge() {
+    fn draw_circle_clipped_at_edge() -> Result<()> {
         let w = 10;
         let h = 10;
-        let mut canvas = Canvas::new(w, h);
+        let mut canvas = Canvas::new(w, h)?;
 
         let center = Point { x: 1.0, y: 1.0 };
         let radius = 5.0;
-        let damage = canvas.draw_circle(center, radius, Color::BLUE);
+        let damage = canvas.draw_circle(center, radius, Color::BLUE)?;
 
         assert!(damage.x() >= 0);
         assert!(damage.y() >= 0);
@@ -283,6 +301,7 @@ mod tests {
         assert!(damage.y() + damage.height() <= h);
 
         assert_eq!(canvas.pixel_at(1, 1), Color::BLUE);
+        Ok(())
     }
 
     // -------------------------------------------------------
@@ -290,15 +309,15 @@ mod tests {
     // -------------------------------------------------------
 
     #[test]
-    fn draw_line_horizontal_fills_pixels_along_path() {
+    fn draw_line_horizontal_fills_pixels_along_path() -> Result<()> {
         let w = 30;
         let h = 10;
-        let mut canvas = Canvas::new(w, h);
+        let mut canvas = Canvas::new(w, h)?;
 
         let from = Point { x: 5.0, y: 5.0 };
         let to = Point { x: 25.0, y: 5.0 };
         let radius = 1.5;
-        canvas.draw_line(from, to, radius, Color::RED);
+        canvas.draw_line(from, to, radius, Color::RED)?;
 
         for x in 5..=25 {
             assert_eq!(
@@ -307,18 +326,19 @@ mod tests {
                 "pixel ({x}, 5) on line should be RED"
             );
         }
+        Ok(())
     }
 
     #[test]
-    fn draw_line_vertical_fills_pixels_along_path() {
+    fn draw_line_vertical_fills_pixels_along_path() -> Result<()> {
         let w = 10;
         let h = 30;
-        let mut canvas = Canvas::new(w, h);
+        let mut canvas = Canvas::new(w, h)?;
 
         let from = Point { x: 5.0, y: 3.0 };
         let to = Point { x: 5.0, y: 20.0 };
         let radius = 1.5;
-        canvas.draw_line(from, to, radius, Color::BLUE);
+        canvas.draw_line(from, to, radius, Color::BLUE)?;
 
         for y in 3..=20 {
             assert_eq!(
@@ -327,18 +347,19 @@ mod tests {
                 "pixel (5, {y}) on line should be BLUE"
             );
         }
+        Ok(())
     }
 
     #[test]
-    fn draw_line_returns_correct_damage_rect() {
+    fn draw_line_returns_correct_damage_rect() -> Result<()> {
         let w = 40;
         let h = 40;
-        let mut canvas = Canvas::new(w, h);
+        let mut canvas = Canvas::new(w, h)?;
 
         let from = Point { x: 5.0, y: 10.0 };
         let to = Point { x: 30.0, y: 25.0 };
         let radius = 2.0;
-        let damage = canvas.draw_line(from, to, radius, Color::RED);
+        let damage = canvas.draw_line(from, to, radius, Color::RED)?;
 
         assert!(damage.x() <= 3, "damage.x={} should be <= 3", damage.x());
         assert!(damage.y() <= 8, "damage.y={} should be <= 8", damage.y());
@@ -352,20 +373,22 @@ mod tests {
             "damage bottom edge {} should be >= 27",
             damage.y() + damage.height()
         );
+        Ok(())
     }
 
     #[test]
-    fn draw_line_single_point() {
+    fn draw_line_single_point() -> Result<()> {
         let w = 20;
         let h = 20;
-        let mut canvas = Canvas::new(w, h);
+        let mut canvas = Canvas::new(w, h)?;
 
         let p = Point { x: 10.0, y: 10.0 };
         let radius = 3.0;
-        let damage = canvas.draw_line(p, p, radius, Color::RED);
+        let damage = canvas.draw_line(p, p, radius, Color::RED)?;
 
         assert_eq!(canvas.pixel_at(10, 10), Color::RED);
         assert!(damage.width() > 0);
         assert!(damage.height() > 0);
+        Ok(())
     }
 }

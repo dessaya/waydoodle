@@ -7,7 +7,7 @@ use smithay_client_toolkit::seat::keyboard::Keysym;
 use crate::{
     actions::{Action, FocusDirection, GLOBAL_ACCELS, NO_MENU_ACCELS},
     canvas::{Color, Point},
-    waydoodle::{InputButton, Tool},
+    waydoodle::{InputButton, Result, Tool},
 };
 
 enum MenuComponent {
@@ -173,7 +173,7 @@ impl MenuComponent {
     const PADDING_Y: i32 = 5;
     const SWATCH_SIZE: i32 = 16;
 
-    fn height(&self, ctx: &Context) -> Result<i32, cairo::Error> {
+    fn height(&self, ctx: &Context) -> Result<i32> {
         let fe = ctx.font_extents()?;
         let font_height = (fe.ascent() + fe.descent()).ceil() as i32;
         Ok(match self {
@@ -184,7 +184,7 @@ impl MenuComponent {
         })
     }
 
-    fn calc_extents(&self, ctx: &Context) -> Result<(i32, i32), cairo::Error> {
+    fn calc_extents(&self, ctx: &Context) -> Result<(i32, i32)> {
         match self {
             MenuComponent::Category { name, items, .. } => {
                 let label_w =
@@ -209,12 +209,7 @@ impl MenuComponent {
         }
     }
 
-    fn layout_row(
-        &mut self,
-        ctx: &Context,
-        menu_rect: &RectangleInt,
-        row_y: i32,
-    ) -> Result<i32, cairo::Error> {
+    fn layout_row(&mut self, ctx: &Context, menu_rect: &RectangleInt, row_y: i32) -> Result<i32> {
         let row_h = self.height(ctx)?;
         match self {
             MenuComponent::Category {
@@ -242,7 +237,7 @@ impl MenuComponent {
         Ok(row_h)
     }
 
-    fn render(&self, ctx: &Context, hover: Option<usize>) -> Result<(), cairo::Error> {
+    fn render(&self, ctx: &Context, hover: Option<usize>) -> Result<()> {
         let fe = ctx.font_extents()?;
         match self {
             MenuComponent::Category {
@@ -352,7 +347,7 @@ impl MenuComponent {
         Ok(())
     }
 
-    fn checkerboard() -> Result<ImageSurface, cairo::Error> {
+    fn checkerboard() -> Result<ImageSurface> {
         let checkerboard =
             ImageSurface::create(Format::ARgb32, Self::SWATCH_SIZE, Self::SWATCH_SIZE)?;
         {
@@ -380,7 +375,7 @@ pub struct ContextMenu {
 }
 
 impl ContextMenu {
-    pub fn new(pos: Point, screen_width: i32, screen_height: i32) -> Result<Self, cairo::Error> {
+    pub fn new(pos: Point, screen_width: i32, screen_height: i32) -> Result<Self> {
         let dummy = UI::dummy_surface()?;
         let ctx = UI::make_ctx(&dummy)?;
 
@@ -443,7 +438,7 @@ impl ContextMenu {
         (x, y)
     }
 
-    pub fn render(&self, ctx: &Context) -> Result<(), cairo::Error> {
+    pub fn render(&self, ctx: &Context) -> Result<()> {
         // Full menu background.
         ctx.set_source_rgb(0.1, 0.1, 0.1);
         ctx.rectangle(
@@ -503,11 +498,11 @@ impl UI {
     const FONT_SLANT: FontSlant = FontSlant::Normal;
     const FONT_WEIGHT: FontWeight = FontWeight::Normal;
 
-    fn dummy_surface() -> Result<ImageSurface, cairo::Error> {
+    fn dummy_surface() -> Result<ImageSurface> {
         ImageSurface::create(Format::ARgb32, 1, 1)
     }
 
-    fn make_ctx(surface: &ImageSurface) -> Result<Context, cairo::Error> {
+    fn make_ctx(surface: &ImageSurface) -> Result<Context> {
         let font_face =
             FontFace::toy_create(Self::FONT_FAMILY, Self::FONT_SLANT, Self::FONT_WEIGHT)?;
         let ctx = Context::new(surface)?;
@@ -516,7 +511,7 @@ impl UI {
         Ok(ctx)
     }
 
-    pub fn new(width: i32, height: i32) -> Result<Self, cairo::Error> {
+    pub fn new(width: i32, height: i32) -> Result<Self> {
         Ok(Self {
             surface: ImageSurface::create(Format::ARgb32, width, height)?,
             context_menu: None,
@@ -524,7 +519,7 @@ impl UI {
         })
     }
 
-    pub fn surface_data(&'_ mut self) -> Result<ImageSurfaceData<'_>, BorrowError> {
+    pub fn surface_data(&'_ mut self) -> std::result::Result<ImageSurfaceData<'_>, BorrowError> {
         self.surface.data()
     }
 
@@ -532,7 +527,7 @@ impl UI {
         &mut self,
         pos: Point,
         btn: InputButton,
-    ) -> Result<(Option<Action>, bool), cairo::Error> {
+    ) -> Result<(Option<Action>, bool)> {
         let Some(mut menu) = self.context_menu.take() else {
             if btn == InputButton::Secondary {
                 // Open the context menu.
@@ -557,7 +552,7 @@ impl UI {
         &mut self,
         pos: Point,
         btn: InputButton,
-    ) -> Result<(Option<Action>, bool), cairo::Error> {
+    ) -> Result<(Option<Action>, bool)> {
         let action = {
             let Some(menu) = self.context_menu.as_mut() else {
                 // No menu open — nothing to do.
@@ -581,7 +576,7 @@ impl UI {
         Ok((action, true))
     }
 
-    pub fn on_pointer_motion(&mut self, pos: Point) -> Result<bool, cairo::Error> {
+    pub fn on_pointer_motion(&mut self, pos: Point) -> Result<bool> {
         self.last_pointer_pos = Some(pos);
         if let Some(menu) = &mut self.context_menu {
             if menu.update_hover(pos) {
@@ -595,7 +590,7 @@ impl UI {
         }
     }
 
-    fn render(&mut self) -> Result<(), cairo::Error> {
+    fn render(&mut self) -> Result<()> {
         let ctx = UI::make_ctx(&self.surface)?;
         ctx.set_source_rgba(0.0, 0.0, 0.0, 0.0);
         ctx.set_operator(cairo::Operator::Source);
@@ -606,7 +601,7 @@ impl UI {
         Ok(())
     }
 
-    pub fn open_context_menu(&mut self) -> Result<(), cairo::Error> {
+    pub fn open_context_menu(&mut self) -> Result<()> {
         if self.context_menu.is_none() {
             let pos = self.last_pointer_pos.unwrap_or(Point { x: 0.0, y: 0.0 });
             self.context_menu = Some(ContextMenu::new(
@@ -619,10 +614,7 @@ impl UI {
         Ok(())
     }
 
-    pub(crate) fn focus_menu_item(
-        &mut self,
-        direction: FocusDirection,
-    ) -> Result<(), cairo::Error> {
+    pub(crate) fn focus_menu_item(&mut self, direction: FocusDirection) -> Result<()> {
         let Some(menu) = self.context_menu.as_mut() else {
             // No menu open — nothing to focus.
             return Ok(());
@@ -687,7 +679,7 @@ impl UI {
         Ok(())
     }
 
-    pub fn close_context_menu(&mut self) -> Result<(), cairo::Error> {
+    pub fn close_context_menu(&mut self) -> Result<()> {
         if self.context_menu.is_some() {
             self.context_menu = None;
             self.render()?;

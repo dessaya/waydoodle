@@ -1,4 +1,3 @@
-use cairo::RectangleInt;
 use smithay_client_toolkit::{
     compositor::Region,
     shell::{
@@ -206,7 +205,9 @@ impl App {
                     state: waydoodle::OverlayState::new(width, height)
                         .expect("Failed to create overlay state"),
                 };
-                overlay.mark_dirty(&self.queue_handle, RectangleInt::new(0, 0, width, height));
+                if let Some(damage) = overlay.state.take_damage() {
+                    overlay.mark_dirty(&self.queue_handle, damage);
+                }
                 self.overlay = Some(OverlayStatus::Ready(overlay));
             }
             Some(OverlayStatus::Ready(overlay))
@@ -217,13 +218,18 @@ impl App {
                     width,
                     height
                 );
-                let damage = overlay.state.resize(width, height);
+                overlay
+                    .state
+                    .resize(width, height)
+                    .expect("Failed to resize overlay state");
                 let (pool, buffers) =
                     Self::create_overlay_pool_and_buffers(&self.wayland.shm, width, height);
                 overlay.pool = pool;
                 overlay.buffers = buffers;
                 overlay.stale = [cairo::Region::create(), cairo::Region::create()];
-                overlay.mark_dirty(&self.queue_handle, damage);
+                if let Some(damage) = overlay.state.take_damage() {
+                    overlay.mark_dirty(&self.queue_handle, damage);
+                }
             }
             _ => {}
         }

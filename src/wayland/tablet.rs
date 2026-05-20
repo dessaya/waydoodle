@@ -116,7 +116,8 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for App {
                     };
                     overlay
                         .state
-                        .on_tablet_button(tablet.pos, input_btn, pressed);
+                        .on_tablet_button(tablet.pos, input_btn, pressed)
+                        .expect("Failed to handle tablet button event");
                     state.update_overlay_after_event();
                 }
             }
@@ -129,7 +130,10 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for App {
                     return;
                 };
                 if let Some(OverlayStatus::Ready(overlay)) = state.overlay.as_mut() {
-                    overlay.state.on_tablet_down(tablet.pos);
+                    overlay
+                        .state
+                        .on_tablet_down(tablet.pos)
+                        .expect("Failed to handle tablet down event");
                     state.update_overlay_after_event();
                 }
             }
@@ -142,7 +146,10 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for App {
                     return;
                 };
                 if let Some(OverlayStatus::Ready(overlay)) = state.overlay.as_mut() {
-                    overlay.state.on_tablet_up(tablet.pos);
+                    overlay
+                        .state
+                        .on_tablet_up(tablet.pos)
+                        .expect("Failed to handle tablet up event");
                     state.update_overlay_after_event();
                 }
             }
@@ -156,7 +163,10 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for App {
                 };
                 tablet.pos = Point { x, y };
                 if let Some(OverlayStatus::Ready(overlay)) = state.overlay.as_mut() {
-                    overlay.state.on_tablet_motion(tablet.pos);
+                    overlay
+                        .state
+                        .on_tablet_motion(tablet.pos)
+                        .expect("Failed to handle tablet motion event");
                     state.update_overlay_after_event();
                 }
             }

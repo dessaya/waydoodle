@@ -291,7 +291,10 @@ impl KeyboardHandler for App {
         let Some(OverlayStatus::Ready(overlay)) = self.overlay.as_mut() else {
             return;
         };
-        overlay.state.on_key_pressed(event.keysym);
+        overlay
+            .state
+            .on_key_pressed(event.keysym)
+            .expect("Failed to handle key press event");
         self.update_overlay_after_event();
     }
 
@@ -387,7 +390,10 @@ impl PointerHandler for App {
                             x: event.position.0,
                             y: event.position.1,
                         };
-                        overlay.state.on_pointer_motion(pos);
+                        overlay
+                            .state
+                            .on_pointer_motion(pos)
+                            .expect("Failed to handle pointer motion event");
                         self.update_overlay_after_event();
                     }
                 }
@@ -404,7 +410,10 @@ impl PointerHandler for App {
                         continue;
                     };
                     if let Some(OverlayStatus::Ready(overlay)) = self.overlay.as_mut() {
-                        overlay.state.on_pointer_button_pressed(pos, input_btn);
+                        overlay
+                            .state
+                            .on_pointer_button_pressed(pos, input_btn)
+                            .expect("Failed to handle pointer button press event");
                         self.update_overlay_after_event();
                     }
                 }
@@ -421,7 +430,10 @@ impl PointerHandler for App {
                         continue;
                     };
                     if let Some(OverlayStatus::Ready(overlay)) = self.overlay.as_mut() {
-                        overlay.state.on_pointer_button_released(pos, input_btn);
+                        overlay
+                            .state
+                            .on_pointer_button_released(pos, input_btn)
+                            .expect("Failed to handle pointer button release event");
                         self.update_overlay_after_event();
                     }
                 }
