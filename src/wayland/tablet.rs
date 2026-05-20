@@ -132,8 +132,15 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for App {
                     return;
                 };
                 if let Some(OverlayStatus::Ready(overlay)) = state.overlay.as_mut() {
-                    let damage = overlay.state.begin_stroke(tablet.pos);
-                    overlay.mark_dirty(qh, damage);
+                    if overlay.state.ui.is_context_menu_open() {
+                        let (keep_open, redraw, cursor_shape) = overlay
+                            .state
+                            .on_pointer_button_pressed(tablet.pos, InputButton::Primary);
+                        state.handle_overlay_event_result(keep_open, redraw, cursor_shape);
+                    } else {
+                        let damage = overlay.state.begin_stroke(tablet.pos);
+                        overlay.mark_dirty(qh, damage);
+                    }
                 }
             }
             zwp_tablet_tool_v2::Event::Up => {
