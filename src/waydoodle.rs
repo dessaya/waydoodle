@@ -4,7 +4,7 @@ use smithay_client_toolkit::seat::keyboard::Keysym;
 use crate::{
     actions::{Action, GLOBAL_ACCELS, MENU_ACCELS, NO_MENU_ACCELS},
     canvas::{Canvas, Color, Point},
-    ui::UI,
+    ui::{self, UI},
 };
 
 pub type Result<T> = std::result::Result<T, cairo::Error>;
@@ -107,12 +107,12 @@ impl OverlayState {
         match action {
             Action::SetTool(tool) => {
                 self.primary_tool = tool;
-                self.ui.close_context_menu()?;
+                self.ui.close_context_menu(&self.ui_state())?;
             }
             Action::Clear => {
                 self.canvas.fill(self.background_color)?;
                 self.history.push(HistoryItem::Clear(self.background_color));
-                self.ui.close_context_menu()?;
+                self.ui.close_context_menu(&self.ui_state())?;
             }
             Action::SetBackground(color) => {
                 if self.background_color != color {
@@ -120,29 +120,29 @@ impl OverlayState {
                     self.canvas.fill(self.background_color)?;
                     self.history.push(HistoryItem::Clear(self.background_color));
                 }
-                self.ui.close_context_menu()?;
+                self.ui.close_context_menu(&self.ui_state())?;
             }
             Action::Undo => {
                 if self.history.pop().is_some() {
                     self.canvas.clear()?;
                     self.replay_history()?;
                 }
-                self.ui.close_context_menu()?;
+                self.ui.close_context_menu(&self.ui_state())?;
             }
             Action::OpenContextMenu => {
-                self.ui.open_context_menu()?;
+                self.ui.open_context_menu(&self.ui_state())?;
             }
             Action::CloseContextMenu => {
-                self.ui.close_context_menu()?;
+                self.ui.close_context_menu(&self.ui_state())?;
             }
             Action::Focus(direction) => {
-                self.ui.focus_menu_item(direction)?;
+                self.ui.focus_menu_item(&self.ui_state(), direction)?;
             }
             Action::ApplyMenuSelection => {
                 if let Some(action) = self.ui.get_menu_selection() {
                     self.apply_action(action)?;
                 }
-                self.ui.close_context_menu()?;
+                self.ui.close_context_menu(&self.ui_state())?;
             }
             Action::HideOverlay => {
                 self.keep_open = false;
@@ -313,7 +313,7 @@ impl OverlayState {
     }
 
     fn on_button_pressed(&mut self, pos: Point, btn: InputButton) -> Result<bool> {
-        let (action, handled) = self.ui.on_pointer_button_pressed(pos, btn)?;
+        let (action, handled) = self.ui.on_button_pressed(&self.ui_state(), pos, btn)?;
         if let Some(action) = action {
             self.apply_action(action)?;
             self.mark_dirty(self.canvas.rect());
@@ -335,7 +335,7 @@ impl OverlayState {
     }
 
     fn on_button_released(&mut self, pos: Point, btn: InputButton) -> Result<bool> {
-        let (action, handled) = self.ui.on_pointer_button_released(pos, btn)?;
+        let (action, handled) = self.ui.on_button_released(&self.ui_state(), pos, btn)?;
         if let Some(action) = action {
             self.apply_action(action)?;
             self.mark_dirty(self.canvas.rect());
@@ -350,7 +350,7 @@ impl OverlayState {
     }
 
     fn on_motion(&mut self, pos: Point) -> Result<()> {
-        let redraw = self.ui.on_pointer_motion(pos)?;
+        let redraw = self.ui.on_motion(&self.ui_state(), pos)?;
         if redraw {
             self.mark_dirty(self.canvas.rect());
             return Ok(());
@@ -403,6 +403,13 @@ impl OverlayState {
 
     pub(crate) fn cursor_shape(&self) -> CursorShape {
         self.current_tool().cursor_shape()
+    }
+
+    fn ui_state(&self) -> ui::State {
+        ui::State {
+            primary_tool: self.primary_tool,
+            background_color: self.background_color,
+        }
     }
 }
 

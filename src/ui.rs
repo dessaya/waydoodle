@@ -11,17 +11,20 @@ use crate::{
 };
 
 enum MenuComponent {
-    Category {
-        name: &'static str,
-        label_rect: RectangleInt,
-        items: Vec<SwatchMenuItem>,
-    },
+    ToolSelector(ToolSelector),
     Item(RowMenuItem),
 }
 
-struct SwatchMenuItem {
+struct ToolSelector {
+    pub name: &'static str,
+    pub label_rect: RectangleInt,
+    pub items: Vec<ToolMenuItem>,
+}
+
+struct ToolMenuItem {
     pub swatch: Color,
     pub btn: MenuButton,
+    pub selected: Box<dyn Fn(&State) -> bool>,
 }
 
 struct RowMenuItem {
@@ -54,78 +57,113 @@ impl MenuButton {
 }
 
 fn build_menu() -> Vec<MenuComponent> {
-    let mut id = 0;
-    let pen_items = build_pen_menu_items(id);
-    id += pen_items.len();
-    let eraser_item = build_row_menu_item(id, "Eraser", Action::SetTool(Tool::Eraser));
-    id += 1;
-    let background_items = build_background_menu_items(id);
-    id += background_items.len();
-    let clear_item = build_row_menu_item(id, "Clear screen", Action::Clear);
-    id += 1;
-    let undo_item = build_row_menu_item(id, "Undo", Action::Undo);
-    id += 1;
-    let hide_overlay_item = build_row_menu_item(id, "Hide overlay", Action::HideOverlay);
+    let mut next_id = {
+        let mut id = 0usize;
+        move || {
+            let i = id;
+            id += 1;
+            i
+        }
+    };
 
     vec![
-        MenuComponent::Category {
-            name: "Pen",
-            items: pen_items,
-            label_rect: RectangleInt::new(0, 0, 0, 0),
-        },
-        MenuComponent::Item(eraser_item),
-        MenuComponent::Category {
-            name: "Background",
-            items: background_items,
-            label_rect: RectangleInt::new(0, 0, 0, 0),
-        },
-        MenuComponent::Item(clear_item),
-        MenuComponent::Item(undo_item),
-        MenuComponent::Item(hide_overlay_item),
+        MenuComponent::ToolSelector(build_pen_tool_selector(&mut next_id)),
+        MenuComponent::ToolSelector(build_eraser_tool_selector(&mut next_id)),
+        MenuComponent::ToolSelector(build_background_tool_selector(&mut next_id)),
+        MenuComponent::Item(build_row_menu_item(
+            &mut next_id,
+            "Clear screen",
+            Action::Clear,
+        )),
+        MenuComponent::Item(build_row_menu_item(&mut next_id, "Undo", Action::Undo)),
+        MenuComponent::Item(build_row_menu_item(
+            &mut next_id,
+            "Hide overlay",
+            Action::HideOverlay,
+        )),
     ]
 }
 
-fn build_pen_menu_items(start_id: usize) -> Vec<SwatchMenuItem> {
-    GLOBAL_ACCELS
-        .iter()
-        .filter(|(_, action)| matches!(action, Action::SetTool(Tool::Pen(_))))
-        .enumerate()
-        .map(move |(i, (keysym, action))| match action {
-            Action::SetTool(Tool::Pen(color)) => SwatchMenuItem {
-                swatch: *color,
-                btn: MenuButton {
-                    id: start_id + i,
-                    action: *action,
-                    accel: accel_label(*keysym),
-                    rect: RectangleInt::new(0, 0, 0, 0),
-                },
-            },
-            _ => unreachable!(),
-        })
-        .collect()
+fn build_pen_tool_selector(next_id: &mut impl FnMut() -> usize) -> ToolSelector {
+    build_tool_selector(
+        "Pen",
+        next_id,
+        GLOBAL_ACCELS
+            .iter()
+            .filter_map(|(keysym, action)| match action {
+                Action::SetTool(Tool::Pen(color)) => Some((
+                    *keysym,
+                    *action,
+                    *color,
+                    Box::new(|s: &State| s.primary_tool == Tool::Pen(*color))
+                        as Box<dyn Fn(&State) -> bool>,
+                )),
+                _ => None,
+            }),
+    )
 }
 
-fn build_background_menu_items(start_id: usize) -> Vec<SwatchMenuItem> {
-    GLOBAL_ACCELS
-        .iter()
-        .filter(|(_, action)| matches!(action, Action::SetBackground(_)))
-        .enumerate()
-        .map(move |(i, (keysym, action))| match action {
-            Action::SetBackground(color) => SwatchMenuItem {
-                swatch: *color,
-                btn: MenuButton {
-                    id: start_id + i,
-                    action: *action,
-                    accel: accel_label(*keysym),
-                    rect: RectangleInt::new(0, 0, 0, 0),
-                },
-            },
-            _ => unreachable!(),
-        })
-        .collect()
+fn build_eraser_tool_selector(next_id: &mut impl FnMut() -> usize) -> ToolSelector {
+    build_tool_selector(
+        "Eraser",
+        next_id,
+        [(
+            Keysym::e,
+            Action::SetTool(Tool::Eraser),
+            Color::TRANSPARENT,
+            Box::new(|s: &State| s.primary_tool == Tool::Eraser) as Box<dyn Fn(&State) -> bool>,
+        )],
+    )
 }
 
-fn build_row_menu_item(id: usize, label: &'static str, action: Action) -> RowMenuItem {
+fn build_background_tool_selector(next_id: &mut impl FnMut() -> usize) -> ToolSelector {
+    build_tool_selector(
+        "Background",
+        next_id,
+        GLOBAL_ACCELS
+            .iter()
+            .filter_map(|(keysym, action)| match action {
+                Action::SetBackground(color) => Some((
+                    *keysym,
+                    *action,
+                    *color,
+                    Box::new(|s: &State| s.background_color == *color)
+                        as Box<dyn Fn(&State) -> bool>,
+                )),
+                _ => None,
+            }),
+    )
+}
+
+fn build_tool_selector(
+    name: &'static str,
+    next_id: &mut impl FnMut() -> usize,
+    items: impl IntoIterator<Item = (Keysym, Action, Color, Box<dyn Fn(&State) -> bool>)>,
+) -> ToolSelector {
+    ToolSelector {
+        name,
+        items: items
+            .into_iter()
+            .map(|(keysym, action, swatch, selected)| ToolMenuItem {
+                swatch,
+                btn: MenuButton {
+                    id: next_id(),
+                    action,
+                    accel: accel_label(keysym),
+                    rect: RectangleInt::new(0, 0, 0, 0),
+                },
+                selected,
+            })
+            .collect(),
+        label_rect: RectangleInt::new(0, 0, 0, 0),
+    }
+}
+
+fn build_row_menu_item(
+    next_id: &mut impl FnMut() -> usize,
+    label: &'static str,
+    action: Action,
+) -> RowMenuItem {
     let accel = GLOBAL_ACCELS
         .iter()
         .chain(NO_MENU_ACCELS.iter())
@@ -140,7 +178,7 @@ fn build_row_menu_item(id: usize, label: &'static str, action: Action) -> RowMen
     RowMenuItem {
         label,
         btn: MenuButton {
-            id,
+            id: next_id(),
             action,
             accel,
             rect: RectangleInt::new(0, 0, 0, 0),
@@ -177,7 +215,7 @@ impl MenuComponent {
         let fe = ctx.font_extents()?;
         let font_height = (fe.ascent() + fe.descent()).ceil() as i32;
         Ok(match self {
-            MenuComponent::Category { .. } => {
+            MenuComponent::ToolSelector { .. } => {
                 Self::PADDING_Y * 2 + font_height.max(Self::SWATCH_SIZE)
             }
             MenuComponent::Item(_) => Self::PADDING_Y * 2 + font_height,
@@ -186,7 +224,7 @@ impl MenuComponent {
 
     fn calc_extents(&self, ctx: &Context) -> Result<(i32, i32)> {
         match self {
-            MenuComponent::Category { name, items, .. } => {
+            MenuComponent::ToolSelector(ToolSelector { name, items, .. }) => {
                 let label_w =
                     Self::PADDING_X * 2 + ctx.text_extents(name)?.x_advance().ceil() as i32;
                 let btns_w = (Self::PADDING_X * 2 + Self::SWATCH_SIZE) * items.len() as i32;
@@ -212,11 +250,11 @@ impl MenuComponent {
     fn layout_row(&mut self, ctx: &Context, menu_rect: &RectangleInt, row_y: i32) -> Result<i32> {
         let row_h = self.height(ctx)?;
         match self {
-            MenuComponent::Category {
+            MenuComponent::ToolSelector(ToolSelector {
                 name,
                 items,
                 label_rect,
-            } => {
+            }) => {
                 let label_text_w = ctx.text_extents(name)?.x_advance().ceil() as i32;
                 let label_w = Self::PADDING_X * 2 + label_text_w;
                 *label_rect = RectangleInt::new(menu_rect.x(), row_y, label_w, row_h);
@@ -237,14 +275,14 @@ impl MenuComponent {
         Ok(row_h)
     }
 
-    fn render(&self, ctx: &Context, hover: Option<usize>) -> Result<()> {
+    fn render(&self, ctx: &Context, hover: Option<usize>, state: &State) -> Result<()> {
         let fe = ctx.font_extents()?;
         match self {
-            MenuComponent::Category {
+            MenuComponent::ToolSelector(ToolSelector {
                 name,
                 label_rect,
                 items,
-            } => {
+            }) => {
                 // Hover highlight on the hovered button (if any) in this category.
                 if let Some(hover) = hover
                     && let Some(item) = items.iter().find(|item| item.btn.id == hover)
@@ -274,6 +312,24 @@ impl MenuComponent {
                     let swatch_y =
                         br.y() as f64 + (br.height() as f64 - Self::SWATCH_SIZE as f64) / 2.0;
 
+                    // selected: white-black-white border around the swatch for contrast on any color
+                    if (*item.selected)(state) {
+                        for (inset, (r, g, b)) in [
+                            (3.0, (0.9, 0.9, 0.9)),
+                            (2.0, (0.0, 0.0, 0.0)),
+                            (1.0, (0.9, 0.9, 0.9)),
+                        ] {
+                            ctx.set_source_rgb(r, g, b);
+                            ctx.rectangle(
+                                swatch_x - inset,
+                                swatch_y - inset,
+                                Self::SWATCH_SIZE as f64 + inset * 2.0,
+                                Self::SWATCH_SIZE as f64 + inset * 2.0,
+                            );
+                            ctx.fill()?;
+                        }
+                    }
+
                     let color = item.swatch;
                     if color.a > 0 {
                         ctx.set_source_rgb(
@@ -294,19 +350,22 @@ impl MenuComponent {
                     );
                     ctx.fill()?;
 
-                    // label color should have good contrast against the swatch
-                    if color.luma() < 0.5 {
-                        ctx.set_source_rgb(0.9, 0.9, 0.9);
+                    // center the accel label over the swatch
+                    let fg = if color.luma() < 0.5 {
+                        (0.9, 0.9, 0.9)
                     } else {
-                        ctx.set_source_rgb(0.1, 0.1, 0.1);
-                    }
-
-                    // center the accel label under the swatch
+                        (0.1, 0.1, 0.1)
+                    };
                     let extents = ctx.text_extents(item.btn.accel)?;
-                    ctx.move_to(
-                        swatch_x + (Self::SWATCH_SIZE as f64 - extents.x_advance()) / 2.0,
-                        baseline_y,
-                    );
+                    let text_x = swatch_x + (Self::SWATCH_SIZE as f64 - extents.x_advance()) / 2.0;
+                    if color.a == 0 {
+                        // 1px shadow for readability
+                        ctx.set_source_rgb(1.0, 1.0, 1.0);
+                        ctx.move_to(text_x + 1.0, baseline_y + 1.0);
+                        ctx.show_text(item.btn.accel)?;
+                    }
+                    ctx.set_source_rgb(fg.0, fg.1, fg.2);
+                    ctx.move_to(text_x, baseline_y);
                     ctx.show_text(item.btn.accel)?;
                 }
             }
@@ -438,7 +497,7 @@ impl ContextMenu {
         (x, y)
     }
 
-    pub fn render(&self, ctx: &Context) -> Result<()> {
+    pub fn render(&self, ctx: &Context, state: &State) -> Result<()> {
         // Full menu background.
         ctx.set_source_rgb(0.1, 0.1, 0.1);
         ctx.rectangle(
@@ -450,7 +509,7 @@ impl ContextMenu {
         ctx.fill()?;
 
         for comp in self.components.iter() {
-            comp.render(ctx, self.hover)?;
+            comp.render(ctx, self.hover, state)?;
         }
         Ok(())
     }
@@ -460,7 +519,7 @@ impl ContextMenu {
             .iter()
             .flat_map(|comp| -> Box<dyn Iterator<Item = &MenuButton>> {
                 match comp {
-                    MenuComponent::Category { items, .. } => {
+                    MenuComponent::ToolSelector(ToolSelector { items, .. }) => {
                         Box::new(items.iter().map(|item| &item.btn))
                     }
                     MenuComponent::Item(item) => Box::new(std::iter::once(&item.btn)),
@@ -490,6 +549,11 @@ impl ContextMenu {
     fn selected_action(&self) -> Option<Action> {
         self.selected_button().map(|btn| btn.action)
     }
+}
+
+pub struct State {
+    pub primary_tool: Tool,
+    pub background_color: Color,
 }
 
 pub struct UI {
@@ -529,8 +593,9 @@ impl UI {
         self.surface.data()
     }
 
-    pub fn on_pointer_button_pressed(
+    pub fn on_button_pressed(
         &mut self,
+        state: &State,
         pos: Point,
         btn: InputButton,
     ) -> Result<(Option<Action>, bool)> {
@@ -542,7 +607,7 @@ impl UI {
                     self.surface.width(),
                     self.surface.height(),
                 )?);
-                self.render()?;
+                self.render(state)?;
                 return Ok((None, true));
             }
             // No menu open and not a right-click — nothing to do.
@@ -550,12 +615,13 @@ impl UI {
         };
         // Menu was open: close it and trigger the action under the cursor (if any).
         menu.update_hover(pos);
-        self.render()?;
+        self.render(state)?;
         Ok((menu.selected_action(), true))
     }
 
-    pub fn on_pointer_button_released(
+    pub fn on_button_released(
         &mut self,
+        state: &State,
         pos: Point,
         btn: InputButton,
     ) -> Result<(Option<Action>, bool)> {
@@ -578,15 +644,15 @@ impl UI {
         if action.is_some() {
             self.context_menu = None;
         }
-        self.render()?;
+        self.render(state)?;
         Ok((action, true))
     }
 
-    pub fn on_pointer_motion(&mut self, pos: Point) -> Result<bool> {
+    pub fn on_motion(&mut self, state: &State, pos: Point) -> Result<bool> {
         self.last_pointer_pos = Some(pos);
         if let Some(menu) = &mut self.context_menu {
             if menu.update_hover(pos) {
-                self.render()?;
+                self.render(state)?;
                 Ok(true)
             } else {
                 Ok(false)
@@ -596,18 +662,18 @@ impl UI {
         }
     }
 
-    fn render(&mut self) -> Result<()> {
+    fn render(&mut self, state: &State) -> Result<()> {
         let ctx = UI::make_ctx(&self.surface)?;
         ctx.set_source_rgba(0.0, 0.0, 0.0, 0.0);
         ctx.set_operator(cairo::Operator::Source);
         ctx.paint()?;
         if let Some(menu) = &self.context_menu {
-            menu.render(&ctx)?;
+            menu.render(&ctx, state)?;
         }
         Ok(())
     }
 
-    pub fn open_context_menu(&mut self) -> Result<()> {
+    pub fn open_context_menu(&mut self, state: &State) -> Result<()> {
         if self.context_menu.is_none() {
             let pos = self.last_pointer_pos.unwrap_or(Point { x: 0.0, y: 0.0 });
             self.context_menu = Some(ContextMenu::new(
@@ -615,12 +681,16 @@ impl UI {
                 self.surface.width(),
                 self.surface.height(),
             )?);
-            self.render()?;
+            self.render(state)?;
         }
         Ok(())
     }
 
-    pub(crate) fn focus_menu_item(&mut self, direction: FocusDirection) -> Result<()> {
+    pub(crate) fn focus_menu_item(
+        &mut self,
+        state: &State,
+        direction: FocusDirection,
+    ) -> Result<()> {
         let Some(menu) = self.context_menu.as_mut() else {
             // No menu open — nothing to focus.
             return Ok(());
@@ -681,14 +751,14 @@ impl UI {
         if let Some(next) = next {
             menu.hover = Some(next.id);
         }
-        self.render()?;
+        self.render(state)?;
         Ok(())
     }
 
-    pub fn close_context_menu(&mut self) -> Result<()> {
+    pub fn close_context_menu(&mut self, state: &State) -> Result<()> {
         if self.context_menu.is_some() {
             self.context_menu = None;
-            self.render()?;
+            self.render(state)?;
         }
         Ok(())
     }
