@@ -1,12 +1,11 @@
 use cairo::{
     BorrowError, Context, FontFace, FontSlant, FontWeight, Format, ImageSurface, ImageSurfaceData,
-    RectangleInt,
 };
 use smithay_client_toolkit::seat::keyboard::Keysym;
 
 use crate::{
     actions::{Action, FocusDirection, GLOBAL_ACCELS, NO_MENU_ACCELS},
-    canvas::{Color, Point},
+    canvas::{Color, Point, Rectangle},
     waydoodle::{InputButton, Result, Tool},
 };
 
@@ -17,7 +16,7 @@ enum MenuComponent {
 
 struct ToolSelector {
     pub name: &'static str,
-    pub label_rect: RectangleInt,
+    pub label_rect: Rectangle,
     pub items: Vec<ToolMenuItem>,
 }
 
@@ -35,24 +34,21 @@ struct RowMenuItem {
 struct MenuButton {
     pub id: usize,
     pub action: Action,
-    pub rect: RectangleInt,
+    pub rect: Rectangle,
     pub accel: &'static str,
 }
 
 impl MenuButton {
     fn hit(&self, x: i32, y: i32) -> bool {
-        x >= self.rect.x()
-            && x < self.rect.x() + self.rect.width()
-            && y >= self.rect.y()
-            && y < self.rect.y() + self.rect.height()
+        self.rect.hit(x, y)
     }
 
     fn dy(&self, btn: &MenuButton) -> i32 {
-        btn.rect.y() - self.rect.y()
+        btn.rect.y - self.rect.y
     }
 
     fn dx(&self, btn: &MenuButton) -> i32 {
-        btn.rect.x() - self.rect.x()
+        btn.rect.x - self.rect.x
     }
 }
 
@@ -150,12 +146,12 @@ fn build_tool_selector(
                     id: next_id(),
                     action,
                     accel: accel_label(keysym),
-                    rect: RectangleInt::new(0, 0, 0, 0),
+                    rect: Rectangle::new(0, 0, 0, 0),
                 },
                 selected,
             })
             .collect(),
-        label_rect: RectangleInt::new(0, 0, 0, 0),
+        label_rect: Rectangle::new(0, 0, 0, 0),
     }
 }
 
@@ -181,7 +177,7 @@ fn build_row_menu_item(
             id: next_id(),
             action,
             accel,
-            rect: RectangleInt::new(0, 0, 0, 0),
+            rect: Rectangle::new(0, 0, 0, 0),
         },
     }
 }
@@ -247,7 +243,7 @@ impl MenuComponent {
         }
     }
 
-    fn layout_row(&mut self, ctx: &Context, menu_rect: &RectangleInt, row_y: i32) -> Result<i32> {
+    fn layout_row(&mut self, ctx: &Context, menu_rect: &Rectangle, row_y: i32) -> Result<i32> {
         let row_h = self.height(ctx)?;
         match self {
             MenuComponent::ToolSelector(ToolSelector {
@@ -257,19 +253,19 @@ impl MenuComponent {
             }) => {
                 let label_text_w = ctx.text_extents(name)?.x_advance().ceil() as i32;
                 let label_w = Self::PADDING_X * 2 + label_text_w;
-                *label_rect = RectangleInt::new(menu_rect.x(), row_y, label_w, row_h);
+                *label_rect = Rectangle::new(menu_rect.x, row_y, label_w, row_h);
 
                 // justify buttons to the right of the label, with padding in between
                 let total_btns_w = (Self::PADDING_X * 2 + Self::SWATCH_SIZE) * items.len() as i32;
-                let mut btn_x = menu_rect.x() + menu_rect.width() - total_btns_w;
+                let mut btn_x = menu_rect.right() - total_btns_w;
                 for item in items {
                     let btn_w = Self::PADDING_X * 2 + Self::SWATCH_SIZE;
-                    item.btn.rect = RectangleInt::new(btn_x, row_y, btn_w, row_h);
+                    item.btn.rect = Rectangle::new(btn_x, row_y, btn_w, row_h);
                     btn_x += btn_w;
                 }
             }
             MenuComponent::Item(item) => {
-                item.btn.rect = RectangleInt::new(menu_rect.x(), row_y, menu_rect.width(), row_h);
+                item.btn.rect = Rectangle::new(menu_rect.x, row_y, menu_rect.width, row_h);
             }
         };
         Ok(row_h)
@@ -289,28 +285,28 @@ impl MenuComponent {
                 {
                     ctx.set_source_rgb(0.2, 0.2, 0.2);
                     ctx.rectangle(
-                        item.btn.rect.x() as f64,
-                        item.btn.rect.y() as f64,
-                        item.btn.rect.width() as f64,
-                        item.btn.rect.height() as f64,
+                        item.btn.rect.x as f64,
+                        item.btn.rect.y as f64,
+                        item.btn.rect.width as f64,
+                        item.btn.rect.height as f64,
                     );
                     ctx.fill()?;
                 }
 
-                let baseline_y = label_rect.y() as f64 + Self::PADDING_Y as f64 + fe.ascent();
+                let baseline_y = label_rect.y as f64 + Self::PADDING_Y as f64 + fe.ascent();
 
                 // Category label (non-interactive).
                 ctx.set_source_rgb(0.9, 0.9, 0.9);
-                ctx.move_to(label_rect.x() as f64 + Self::PADDING_X as f64, baseline_y);
+                ctx.move_to(label_rect.x as f64 + Self::PADDING_X as f64, baseline_y);
                 ctx.show_text(name)?;
 
                 // Each button: swatch + accel label.
                 for item in items {
                     let br = item.btn.rect;
 
-                    let swatch_x = br.x() as f64 + Self::PADDING_X as f64;
+                    let swatch_x = br.x as f64 + Self::PADDING_X as f64;
                     let swatch_y =
-                        br.y() as f64 + (br.height() as f64 - Self::SWATCH_SIZE as f64) / 2.0;
+                        br.y as f64 + (br.height as f64 - Self::SWATCH_SIZE as f64) / 2.0;
 
                     // selected: white-black-white border around the swatch for contrast on any color
                     if (*item.selected)(state) {
@@ -374,28 +370,25 @@ impl MenuComponent {
                 if hover == Some(item.btn.id) {
                     ctx.set_source_rgb(0.2, 0.2, 0.2);
                     ctx.rectangle(
-                        item.btn.rect.x() as f64,
-                        item.btn.rect.y() as f64,
-                        item.btn.rect.width() as f64,
-                        item.btn.rect.height() as f64,
+                        item.btn.rect.x as f64,
+                        item.btn.rect.y as f64,
+                        item.btn.rect.width as f64,
+                        item.btn.rect.height as f64,
                     );
                     ctx.fill()?;
                 }
 
                 // Description text.
-                let baseline_y = item.btn.rect.y() as f64 + Self::PADDING_Y as f64 + fe.ascent();
+                let baseline_y = item.btn.rect.y as f64 + Self::PADDING_Y as f64 + fe.ascent();
                 ctx.set_source_rgb(0.9, 0.9, 0.9);
-                ctx.move_to(
-                    item.btn.rect.x() as f64 + Self::PADDING_X as f64,
-                    baseline_y,
-                );
+                ctx.move_to(item.btn.rect.x as f64 + Self::PADDING_X as f64, baseline_y);
                 ctx.show_text(item.label)?;
 
                 // Accel label, right-aligned.
                 ctx.set_source_rgb(0.7, 0.7, 0.7);
                 let accel_adv = ctx.text_extents(item.btn.accel)?.x_advance();
                 ctx.move_to(
-                    item.btn.rect.x() as f64 + item.btn.rect.width() as f64
+                    item.btn.rect.x as f64 + item.btn.rect.width as f64
                         - Self::PADDING_X as f64
                         - accel_adv,
                     baseline_y,
@@ -430,7 +423,7 @@ impl MenuComponent {
 pub struct ContextMenu {
     components: Vec<MenuComponent>,
     hover: Option<usize>,
-    rect: RectangleInt,
+    rect: Rectangle,
 }
 
 impl ContextMenu {
@@ -451,7 +444,7 @@ impl ContextMenu {
 
         let (origin_x, origin_y) =
             Self::calc_origin(pos, menu_w, menu_h, screen_width, screen_height);
-        let menu_rect = RectangleInt::new(origin_x, origin_y, menu_w, menu_h);
+        let menu_rect = Rectangle::new(origin_x, origin_y, menu_w, menu_h);
 
         // Second pass: layout elements
         {
@@ -501,10 +494,10 @@ impl ContextMenu {
         // Full menu background.
         ctx.set_source_rgb(0.1, 0.1, 0.1);
         ctx.rectangle(
-            self.rect.x() as f64,
-            self.rect.y() as f64,
-            self.rect.width() as f64,
-            self.rect.height() as f64,
+            self.rect.x as f64,
+            self.rect.y as f64,
+            self.rect.width as f64,
+            self.rect.height as f64,
         );
         ctx.fill()?;
 
@@ -707,8 +700,7 @@ impl UI {
                             .min_by_key(|btn| (-current.dy(btn), current.dx(btn).abs()))
                             .or_else(|| {
                                 // if there isn't one, wrap around to the bottom-most button
-                                menu.buttons()
-                                    .max_by_key(|btn| (btn.rect.y(), btn.rect.x()))
+                                menu.buttons().max_by_key(|btn| (btn.rect.y, btn.rect.x))
                             })
                     }
                     FocusDirection::Down => {
@@ -717,8 +709,7 @@ impl UI {
                             .min_by_key(|btn| (current.dy(btn), current.dx(btn).abs()))
                             .or_else(|| {
                                 // if there isn't one, wrap around to the top-most button
-                                menu.buttons()
-                                    .min_by_key(|btn| (btn.rect.y(), btn.rect.x()))
+                                menu.buttons().min_by_key(|btn| (btn.rect.y, btn.rect.x))
                             })
                     }
                     FocusDirection::Left => {
@@ -727,8 +718,7 @@ impl UI {
                             .min_by_key(|btn| (-current.dx(btn), current.dy(btn).abs()))
                             .or_else(|| {
                                 // if there isn't one, wrap around to the right-most button
-                                menu.buttons()
-                                    .max_by_key(|btn| (btn.rect.x(), btn.rect.y()))
+                                menu.buttons().max_by_key(|btn| (btn.rect.x, btn.rect.y))
                             })
                     }
                     FocusDirection::Right => {
@@ -737,8 +727,7 @@ impl UI {
                             .min_by_key(|btn| (current.dx(btn), current.dy(btn).abs()))
                             .or_else(|| {
                                 // if there isn't one, wrap around to the left-most button
-                                menu.buttons()
-                                    .min_by_key(|btn| (btn.rect.x(), btn.rect.y()))
+                                menu.buttons().min_by_key(|btn| (btn.rect.x, btn.rect.y))
                             })
                     }
                 }
@@ -767,7 +756,7 @@ impl UI {
         self.context_menu.is_some()
     }
 
-    pub(crate) fn context_menu_rect(&self) -> Option<RectangleInt> {
+    pub(crate) fn context_menu_rect(&self) -> Option<Rectangle> {
         self.context_menu.as_ref().map(|menu| menu.rect)
     }
 

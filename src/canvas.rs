@@ -1,4 +1,4 @@
-use cairo::{Context, ImageSurface, ImageSurfaceData, RectangleInt};
+use cairo::{Context, ImageSurface, ImageSurfaceData};
 
 use crate::waydoodle::Result;
 
@@ -46,6 +46,53 @@ impl Color {
     };
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Rectangle {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+impl Rectangle {
+    pub fn new(x: i32, y: i32, width: i32, height: i32) -> Self {
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    pub fn left(&self) -> i32 {
+        self.x
+    }
+
+    pub fn top(&self) -> i32 {
+        self.y
+    }
+
+    pub fn right(&self) -> i32 {
+        self.x + self.width
+    }
+
+    pub fn bottom(&self) -> i32 {
+        self.y + self.height
+    }
+
+    pub fn union(&self, other: &Self) -> Self {
+        let x1 = self.x.min(other.x);
+        let y1 = self.y.min(other.y);
+        let x2 = self.right().max(other.right());
+        let y2 = self.bottom().max(other.bottom());
+        Self::new(x1, y1, x2 - x1, y2 - y1)
+    }
+
+    pub fn hit(&self, x: i32, y: i32) -> bool {
+        x >= self.left() && x < self.right() && y >= self.top() && y < self.bottom()
+    }
+}
+
 pub(crate) struct Canvas {
     pub(crate) surface: ImageSurface,
 }
@@ -56,8 +103,8 @@ impl Canvas {
         Ok(Self { surface })
     }
 
-    pub fn rect(&self) -> RectangleInt {
-        RectangleInt::new(0, 0, self.width(), self.height())
+    pub fn rect(&self) -> Rectangle {
+        Rectangle::new(0, 0, self.width(), self.height())
     }
 
     pub fn width(&self) -> i32 {
@@ -97,23 +144,23 @@ impl Canvas {
         ctx.set_operator(cairo::Operator::Source);
     }
 
-    pub fn clear(&mut self) -> Result<RectangleInt> {
+    pub fn clear(&mut self) -> Result<Rectangle> {
         let ctx = Context::new(&self.surface)?;
         Self::set_source_rgba(&ctx, Color::TRANSPARENT);
         ctx.paint()?;
-        Ok(RectangleInt::new(0, 0, self.width(), self.height()))
+        Ok(Rectangle::new(0, 0, self.width(), self.height()))
     }
 
-    pub fn fill(&mut self, color: Color) -> Result<RectangleInt> {
+    pub fn fill(&mut self, color: Color) -> Result<Rectangle> {
         let ctx = Context::new(&self.surface)?;
         Self::set_source_rgba(&ctx, color);
         ctx.paint()?;
-        Ok(RectangleInt::new(0, 0, self.width(), self.height()))
+        Ok(Rectangle::new(0, 0, self.width(), self.height()))
     }
 
-    fn extents_to_rect(&self, extents: (f64, f64, f64, f64)) -> RectangleInt {
+    fn extents_to_rect(&self, extents: (f64, f64, f64, f64)) -> Rectangle {
         let (x1, y1, x2, y2) = extents;
-        RectangleInt::new(
+        Rectangle::new(
             (x1.floor() as i32).max(0),
             (y1.floor() as i32).max(0),
             ((x2 - x1).ceil() as i32).min(self.width()),
@@ -121,12 +168,7 @@ impl Canvas {
         )
     }
 
-    pub fn draw_circle(
-        &mut self,
-        center: Point,
-        radius: f64,
-        color: Color,
-    ) -> Result<RectangleInt> {
+    pub fn draw_circle(&mut self, center: Point, radius: f64, color: Color) -> Result<Rectangle> {
         let ctx = Context::new(&self.surface)?;
         Self::set_source_rgba(&ctx, color);
         ctx.arc(center.x, center.y, radius, 0.0, std::f64::consts::TAU);
@@ -141,7 +183,7 @@ impl Canvas {
         to: Point,
         radius: f64,
         color: Color,
-    ) -> Result<RectangleInt> {
+    ) -> Result<Rectangle> {
         if from == to {
             return self.draw_circle(from, radius, color);
         }
@@ -179,10 +221,7 @@ mod tests {
         canvas.fill(Color::RED)?;
 
         let damage = canvas.clear()?;
-        assert_eq!(damage.x(), 0);
-        assert_eq!(damage.y(), 0);
-        assert_eq!(damage.width(), w);
-        assert_eq!(damage.height(), h);
+        assert_eq!(damage, Rectangle::new(0, 0, w, h));
 
         for y in 0..h {
             for x in 0..w {
@@ -203,10 +242,7 @@ mod tests {
         let mut canvas = Canvas::new(w, h)?;
 
         let damage = canvas.fill(Color::RED)?;
-        assert_eq!(damage.x(), 0);
-        assert_eq!(damage.y(), 0);
-        assert_eq!(damage.width(), w);
-        assert_eq!(damage.height(), h);
+        assert_eq!(damage, Rectangle::new(0, 0, w, h));
 
         for y in 0..h {
             for x in 0..w {
@@ -278,10 +314,10 @@ mod tests {
         let radius = 5.0;
         let damage = canvas.draw_circle(center, radius, Color::RED)?;
 
-        assert!(damage.x() <= 10);
-        assert!(damage.y() <= 10);
-        assert!(damage.x() + damage.width() >= 20);
-        assert!(damage.y() + damage.height() >= 20);
+        assert!(damage.x <= 10);
+        assert!(damage.y <= 10);
+        assert!(damage.right() >= 20);
+        assert!(damage.bottom() >= 20);
         Ok(())
     }
 
@@ -295,10 +331,10 @@ mod tests {
         let radius = 5.0;
         let damage = canvas.draw_circle(center, radius, Color::BLUE)?;
 
-        assert!(damage.x() >= 0);
-        assert!(damage.y() >= 0);
-        assert!(damage.x() + damage.width() <= w);
-        assert!(damage.y() + damage.height() <= h);
+        assert!(damage.x >= 0);
+        assert!(damage.y >= 0);
+        assert!(damage.right() <= w);
+        assert!(damage.bottom() <= h);
 
         assert_eq!(canvas.pixel_at(1, 1), Color::BLUE);
         Ok(())
@@ -361,17 +397,17 @@ mod tests {
         let radius = 2.0;
         let damage = canvas.draw_line(from, to, radius, Color::RED)?;
 
-        assert!(damage.x() <= 3, "damage.x={} should be <= 3", damage.x());
-        assert!(damage.y() <= 8, "damage.y={} should be <= 8", damage.y());
+        assert!(damage.x <= 3, "damage.x={} should be <= 3", damage.x);
+        assert!(damage.y <= 8, "damage.y={} should be <= 8", damage.y);
         assert!(
-            damage.x() + damage.width() >= 32,
+            damage.right() >= 32,
             "damage right edge {} should be >= 32",
-            damage.x() + damage.width()
+            damage.right()
         );
         assert!(
-            damage.y() + damage.height() >= 27,
+            damage.bottom() >= 27,
             "damage bottom edge {} should be >= 27",
-            damage.y() + damage.height()
+            damage.bottom()
         );
         Ok(())
     }
@@ -387,8 +423,8 @@ mod tests {
         let damage = canvas.draw_line(p, p, radius, Color::RED)?;
 
         assert_eq!(canvas.pixel_at(10, 10), Color::RED);
-        assert!(damage.width() > 0);
-        assert!(damage.height() > 0);
+        assert!(damage.width > 0);
+        assert!(damage.height > 0);
         Ok(())
     }
 }

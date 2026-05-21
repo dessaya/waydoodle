@@ -1,11 +1,13 @@
 use std::ops::Deref;
 
-use cairo::{RectangleInt, Region};
 use smithay_client_toolkit::shm::slot::{Buffer, SlotPool};
 use wayland_client::QueueHandle;
 use wayland_client::protocol::wl_shm;
 
-use crate::wayland::{App, Overlay};
+use crate::{
+    canvas::Rectangle,
+    wayland::{App, Overlay},
+};
 
 impl Overlay {
     /// Create two SHM buffers, filled with transparent black.
@@ -24,15 +26,15 @@ impl Overlay {
         [buf_a, buf_b]
     }
 
-    fn copy_rect(shm_buf: &mut [u8], canvas_buf: &[u8], width: i32, rect: &RectangleInt) {
+    fn copy_rect(shm_buf: &mut [u8], canvas_buf: &[u8], width: i32, rect: &Rectangle) {
         let stride = width as usize * 4;
         let w = width;
         let h = (canvas_buf.len() / stride) as i32;
 
-        let x0 = rect.x().max(0) as usize;
-        let y0 = rect.y().max(0) as usize;
-        let x1 = (rect.x() + rect.width()).min(w).max(0) as usize;
-        let y1 = (rect.y() + rect.height()).min(h).max(0) as usize;
+        let x0 = rect.x.max(0) as usize;
+        let y0 = rect.y.max(0) as usize;
+        let x1 = rect.right().min(w).max(0) as usize;
+        let y1 = rect.bottom().min(h).max(0) as usize;
 
         if x0 >= x1 || y0 >= y1 {
             return;
@@ -45,21 +47,28 @@ impl Overlay {
         }
     }
 
-    pub(super) fn mark_dirty(&mut self, qh: &QueueHandle<App>, damage: RectangleInt) {
-        let region = Region::create_rectangle(&damage);
-        self.pending_damage
-            .union(&region)
-            .expect("Failed to union damage region");
-
+    pub(super) fn mark_dirty(&mut self, qh: &QueueHandle<App>, damage: Rectangle) {
+        self.pending_damage.push(damage);
         if !self.frame_requested {
+            self.flush_frame(qh);
+            self.pending_damage.clear();
             self.frame_requested = true;
-            let surface = self.window.wl_surface();
-            surface.frame(qh, surface.clone());
-            self.flush_frame();
         }
     }
 
-    fn flush_frame(&mut self) {
+    pub(super) fn on_frame_callback(&mut self, qh: &QueueHandle<App>) {
+        self.frame_requested = false;
+        if !self.pending_damage.is_empty() {
+            self.flush_frame(qh);
+            self.pending_damage.clear();
+            self.frame_requested = true;
+        }
+    }
+
+    fn flush_frame(&mut self, qh: &QueueHandle<App>) {
+        let surface = self.window.wl_surface();
+        surface.frame(qh, surface.clone());
+
         // Find a free SHM buffer. Try both; at least one should be available.
         let (buf_idx, shm_buf) = {
             if let Some(shm_buf) = self.pool.canvas(&self.buffers[0]) {
@@ -72,33 +81,35 @@ impl Overlay {
             }
         };
 
-        let damage = self.pending_damage.copy();
-        self.pending_damage = Region::create();
+        let Some(damage) = self.pending_damage.first() else {
+            log::debug!("flush_frame: no pending damage, skipping");
+            return;
+        };
+        let damage = damage.union(
+            &self
+                .pending_damage
+                .iter()
+                .skip(1)
+                .fold(*damage, |acc, d| acc.union(d)),
+        );
 
         // The total region we must copy into this buffer: the current frame's
         // damage plus any stale region this buffer accumulated while the other
         // buffer was being presented.
-        let copy_rect = self.stale[buf_idx].copy();
-        copy_rect
-            .union(&damage)
-            .expect("Failed to union copy region");
-        self.stale[buf_idx] = Region::create();
+        let stale_rect = self.stale[buf_idx]
+            .take()
+            .map_or(damage, |stale| stale.union(&damage));
 
         // Mark the *other* buffer as stale in the region we're about to present.
         let other = 1 - buf_idx;
-        self.stale[other]
-            .union(&damage)
-            .expect("Failed to union stale region");
+        self.stale[other] = Some(self.stale[other].map_or(damage, |s| s.union(&damage)));
 
         let width = self.state.canvas.width();
 
         // Copy only the affected rows from the off-screen canvas into the SHM
         // buffer.
         let data = self.state.canvas.surface_data();
-        for i in 0..copy_rect.num_rectangles() {
-            let rect = copy_rect.rectangle(i);
-            Self::copy_rect(shm_buf, data.deref(), width, &rect);
-        }
+        Self::copy_rect(shm_buf, data.deref(), width, &stale_rect);
 
         // if the context menu is open, copy its surface into the shm_surface
         if let Some(menu_rect) = self.state.ui.context_menu_rect() {
@@ -110,25 +121,10 @@ impl Overlay {
             Self::copy_rect(shm_buf, surface.deref(), width, &menu_rect);
         }
 
-        let surface = self.window.wl_surface();
-        for i in 0..damage.num_rectangles() {
-            let rect = damage.rectangle(i);
-            surface.damage_buffer(rect.x(), rect.y(), rect.width(), rect.height());
-        }
+        surface.damage_buffer(damage.x, damage.y, damage.width, damage.height);
         self.buffers[buf_idx]
             .attach_to(surface)
             .expect("Failed to attach buffer");
         self.window.commit();
-    }
-
-    pub(super) fn on_frame_callback(&mut self, qh: &QueueHandle<App>) {
-        self.frame_requested = false;
-
-        if !self.pending_damage.is_empty() {
-            self.frame_requested = true;
-            let surface = self.window.wl_surface();
-            surface.frame(qh, surface.clone());
-            self.flush_frame();
-        }
     }
 }

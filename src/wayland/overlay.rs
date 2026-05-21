@@ -13,6 +13,7 @@ use smithay_client_toolkit::{
 use wayland_client::protocol::wl_surface::WlSurface;
 
 use crate::{
+    canvas::Rectangle,
     waydoodle::{self},
     wayland::{App, OverlaySlot},
 };
@@ -51,9 +52,9 @@ pub(super) struct Overlay {
     /// `canvas_buf`. When we present using one buffer, the *other* buffer
     /// accumulates the damage as stale. Next time we use that buffer we
     /// must copy its stale region in addition to the current frame's damage.
-    pub stale: [cairo::Region; 2],
+    pub stale: [Option<Rectangle>; 2],
 
-    pub pending_damage: cairo::Region,
+    pub pending_damage: Vec<Rectangle>,
     pub frame_requested: bool,
 
     pub has_focus: bool,
@@ -197,8 +198,8 @@ impl App {
                     window,
                     pool,
                     buffers,
-                    stale: [cairo::Region::create(), cairo::Region::create()],
-                    pending_damage: cairo::Region::create(),
+                    stale: [None, None],
+                    pending_damage: Vec::new(),
                     frame_requested: false,
                     has_focus: true,
                     state: waydoodle::OverlayState::new(width, height)
@@ -225,7 +226,7 @@ impl App {
                     Self::create_overlay_pool_and_buffers(&self.wayland.shm, width, height);
                 overlay.pool = pool;
                 overlay.buffers = buffers;
-                overlay.stale = [cairo::Region::create(), cairo::Region::create()];
+                overlay.stale = [None, None];
                 if let Some(damage) = overlay.state.take_damage() {
                     overlay.mark_dirty(&self.queue_handle, damage);
                 }

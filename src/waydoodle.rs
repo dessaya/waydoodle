@@ -1,9 +1,8 @@
-use cairo::RectangleInt;
 use smithay_client_toolkit::seat::keyboard::Keysym;
 
 use crate::{
     actions::{Action, GLOBAL_ACCELS, MENU_ACCELS, NO_MENU_ACCELS},
-    canvas::{Canvas, Color, Point},
+    canvas::{Canvas, Color, Point, Rectangle},
     ui::{self, UI},
 };
 
@@ -79,7 +78,7 @@ pub(crate) struct OverlayState {
     pub history: Vec<HistoryItem>,
     pub ui: UI,
     pub keep_open: bool,
-    damage: Vec<RectangleInt>,
+    damage: Vec<Rectangle>,
 }
 
 impl OverlayState {
@@ -194,25 +193,19 @@ impl OverlayState {
             })
     }
 
-    fn mark_dirty(&mut self, damage: RectangleInt) {
+    fn mark_dirty(&mut self, damage: Rectangle) {
         self.damage.push(damage);
     }
 
     /// Consumes the accumulated damage and returns the bounding rectangle that
     /// needs to be redrawn. If there is no damage, returns `None`.
-    pub(crate) fn take_damage(&mut self) -> Option<RectangleInt> {
+    pub(crate) fn take_damage(&mut self) -> Option<Rectangle> {
         let mut iter = self
             .damage
             .drain(..)
-            .filter(|r| r.width() > 0 && r.height() > 0);
+            .filter(|r| r.width > 0 && r.height > 0);
         let first = iter.next()?;
-        let total = iter.fold(first, |acc, r| {
-            let x1 = acc.x().min(r.x());
-            let y1 = acc.y().min(r.y());
-            let x2 = (acc.x() + acc.width()).max(r.x() + r.width());
-            let y2 = (acc.y() + acc.height()).max(r.y() + r.height());
-            RectangleInt::new(x1, y1, x2 - x1, y2 - y1)
-        });
+        let total = iter.fold(first, |acc, r| acc.union(&r));
         Some(total)
     }
 
@@ -617,8 +610,8 @@ mod tests {
             .take_damage()
             .expect("expected damage from pointer motion");
 
-        assert!(damage.width() > 0);
-        assert!(damage.height() > 0);
+        assert!(damage.width > 0);
+        assert!(damage.height > 0);
 
         let mut found_red = false;
         for x in 10..=20 {
@@ -660,8 +653,8 @@ mod tests {
             .take_damage()
             .expect("expected damage from eraser motion");
 
-        assert!(damage.width() > 0);
-        assert!(damage.height() > 0);
+        assert!(damage.width > 0);
+        assert!(damage.height > 0);
 
         let center_pixel = overlay.canvas.pixel_at(20, 30);
         assert_eq!(center_pixel, Color::TRANSPARENT);
@@ -684,8 +677,8 @@ mod tests {
             .take_damage()
             .expect("expected damage from middle mouse button motion");
 
-        assert!(damage.width() > 0);
-        assert!(damage.height() > 0);
+        assert!(damage.width > 0);
+        assert!(damage.height > 0);
 
         let center_pixel = overlay.canvas.pixel_at(20, 30);
         assert_eq!(center_pixel, Color::TRANSPARENT);
@@ -703,8 +696,8 @@ mod tests {
             .take_damage()
             .expect("expected damage from begin_stroke");
 
-        assert!(damage.width() > 0);
-        assert!(damage.height() > 0);
+        assert!(damage.width > 0);
+        assert!(damage.height > 0);
 
         let p = overlay.canvas.pixel_at(32, 32);
         assert_eq!(p, Color::GREEN);
@@ -743,10 +736,7 @@ mod tests {
         let rect = overlay
             .take_damage()
             .expect("expected damage after resizing overlay");
-        assert_eq!(rect.x(), 0);
-        assert_eq!(rect.y(), 0);
-        assert_eq!(rect.width(), TEST_WIDTH);
-        assert_eq!(rect.height(), TEST_HEIGHT);
+        assert_eq!(rect, Rectangle::new(0, 0, TEST_WIDTH, TEST_HEIGHT));
         assert_all_pixels_color(&mut overlay.canvas, Color::TRANSPARENT);
         Ok(())
     }
@@ -995,14 +985,14 @@ mod tests {
             .context_menu_rect()
             .expect("expected context menu rect");
         let point = Point {
-            x: rect.x() as f64 + rect.width() as f64 - 5.0,
-            y: rect.y() as f64 + 5.0,
+            x: rect.right() as f64 - 5.0,
+            y: rect.y as f64 + 5.0,
         };
         overlay.on_pointer_motion(point)?;
         let damage = overlay
             .take_damage()
             .expect("expected damage from hovering menu item");
-        assert!(damage.width() > 0);
+        assert!(damage.width > 0);
 
         // Release the button.
         // Some op should be triggered, and the menu should close.
