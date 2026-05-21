@@ -198,29 +198,21 @@ impl OverlayState {
         self.damage.push(damage);
     }
 
+    /// Consumes the accumulated damage and returns the bounding rectangle that
+    /// needs to be redrawn. If there is no damage, returns `None`.
     pub(crate) fn take_damage(&mut self) -> Option<RectangleInt> {
-        if self.damage.is_empty() {
-            return None;
-        }
-        let mut total = RectangleInt::new(0, 0, 0, 0);
-        for damage in self.damage.iter() {
-            if damage.width() == 0 || damage.height() == 0 {
-                continue;
-            }
-            if damage.x() < total.x() {
-                total.set_x(damage.x());
-            }
-            if damage.y() < total.y() {
-                total.set_y(damage.y());
-            }
-            if damage.x() + damage.width() > total.x() + total.width() {
-                total.set_width(damage.x() + damage.width() - total.x());
-            }
-            if damage.y() + damage.height() > total.y() + total.height() {
-                total.set_height(damage.y() + damage.height() - total.y());
-            }
-        }
-        self.damage.clear();
+        let mut iter = self
+            .damage
+            .drain(..)
+            .filter(|r| r.width() > 0 && r.height() > 0);
+        let first = iter.next()?;
+        let total = iter.fold(first, |acc, r| {
+            let x1 = acc.x().min(r.x());
+            let y1 = acc.y().min(r.y());
+            let x2 = (acc.x() + acc.width()).max(r.x() + r.width());
+            let y2 = (acc.y() + acc.height()).max(r.y() + r.height());
+            RectangleInt::new(x1, y1, x2 - x1, y2 - y1)
+        });
         Some(total)
     }
 
@@ -404,7 +396,7 @@ impl OverlayState {
 
     pub fn resize(&mut self, width: i32, height: i32) -> Result<()> {
         self.canvas = Canvas::new(width, height)?;
-        self.history = Vec::new();
+        self.history.clear();
         self.damage = vec![self.canvas.rect()];
         Ok(())
     }

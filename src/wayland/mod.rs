@@ -68,23 +68,38 @@ struct WaylandState {
 /// Once we receive the configure event, we create the buffers and transition to
 /// the Ready state.
 #[allow(clippy::large_enum_variant)]
-enum OverlayStatus {
+enum OverlaySlot {
+    Empty,
     Pending(WaylandWindow),
     Ready(Overlay),
 }
 
-impl OverlayStatus {
-    fn window(&self) -> &WaylandWindow {
+impl OverlaySlot {
+    fn is_empty(&self) -> bool {
+        matches!(self, OverlaySlot::Empty)
+    }
+
+    fn window(&self) -> Option<&WaylandWindow> {
         match self {
-            OverlayStatus::Pending(w) => w,
-            OverlayStatus::Ready(o) => &o.window,
+            OverlaySlot::Empty => None,
+            OverlaySlot::Pending(w) => Some(w),
+            OverlaySlot::Ready(o) => Some(&o.window),
+        }
+    }
+
+    /// Take the pending window out of the slot, leaving it empty. Panics if the slot is not pending.
+    fn take_pending_window(&mut self) -> WaylandWindow {
+        let old = std::mem::replace(self, OverlaySlot::Empty);
+        match old {
+            OverlaySlot::Pending(w) => w,
+            _ => panic!("Expected pending overlay slot"),
         }
     }
 }
 
 pub(crate) struct App {
     wayland: WaylandState,
-    overlay: Option<OverlayStatus>,
+    overlay: OverlaySlot,
     cursors: Cursors,
     keyboards: Vec<KeyboardState>,
     pointers: Vec<PointerState>,

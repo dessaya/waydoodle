@@ -19,7 +19,7 @@ use super::{WaylandState, cursors::Cursors};
 use crate::{
     tray::{TrayEvent, WaydoodleTray},
     waydoodle::OverlayController,
-    wayland::{App, OverlayStatus},
+    wayland::{App, Overlay, OverlaySlot},
 };
 
 impl App {
@@ -97,7 +97,7 @@ impl App {
             tablets: Vec::new(),
             tablet_manager,
             cursors,
-            overlay: None,
+            overlay: OverlaySlot::Empty,
             tray_handle,
             loop_handle: event_loop.handle(),
             queue_handle: qh,
@@ -154,8 +154,9 @@ impl App {
         }
     }
 
-    pub fn update_overlay_after_event(&mut self) {
-        let Some(OverlayStatus::Ready(overlay)) = self.overlay.as_mut() else {
+    pub fn update_overlay_after_event(&mut self, force_cursor_shape: bool) {
+        let qh = self.queue_handle.clone();
+        let Some(overlay) = self.overlay_ready_mut() else {
             return;
         };
         if !overlay.state.keep_open {
@@ -163,9 +164,16 @@ impl App {
             return;
         }
         if let Some(damage) = overlay.state.take_damage() {
-            overlay.mark_dirty(&self.queue_handle, damage);
+            overlay.mark_dirty(&qh, damage);
         }
         let shape = overlay.state.cursor_shape();
-        self.apply_cursor(shape);
+        self.apply_cursor(shape, force_cursor_shape);
+    }
+
+    pub(super) fn overlay_ready_mut(&mut self) -> Option<&mut Overlay> {
+        match &mut self.overlay {
+            OverlaySlot::Ready(overlay) => Some(overlay),
+            _ => None,
+        }
     }
 }

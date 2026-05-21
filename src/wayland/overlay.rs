@@ -14,7 +14,7 @@ use wayland_client::protocol::wl_surface::WlSurface;
 
 use crate::{
     waydoodle::{self},
-    wayland::{App, OverlayStatus},
+    wayland::{App, OverlaySlot},
 };
 
 pub enum WaylandWindow {
@@ -92,7 +92,7 @@ impl App {
 impl waydoodle::OverlayController for App {
     fn create_overlay(&mut self) {
         debug_assert!(
-            self.overlay.is_none(),
+            self.overlay.is_empty(),
             "create_overlay called while overlay already exists"
         );
 
@@ -135,20 +135,21 @@ impl waydoodle::OverlayController for App {
                 window.set_maximized();
                 window.commit();
                 log::debug!(
-                    "Created overlay widow -- waiting for configure event to create buffers"
+                    "Created overlay window -- waiting for configure event to create buffers"
                 );
                 WaylandWindow::XdgWindow(window)
             }
         };
-        self.overlay = Some(OverlayStatus::Pending(xdg_window_or_layer_surface));
+        self.overlay = OverlaySlot::Pending(xdg_window_or_layer_surface);
     }
 
     fn destroy_overlay(&mut self) {
-        self.overlay = None;
+        self.overlay = OverlaySlot::Empty;
     }
 
     fn toggle_focus_or_destroy_overlay(&mut self) {
-        let Some(OverlayStatus::Ready(overlay)) = self.overlay.as_mut() else {
+        let compositor_state = self.wayland.compositor_state.clone();
+        let Some(overlay) = self.overlay_ready_mut() else {
             return;
         };
         match &overlay.window {
@@ -158,13 +159,13 @@ impl waydoodle::OverlayController for App {
             WaylandWindow::LayerSurface(l) => {
                 let s = l.wl_surface();
                 if overlay.has_focus {
-                    // default (empty) region means the surface receives input events across its entire area
-                    let r = Region::new(&self.wayland.compositor_state)
+                    // Empty region: the surface receives no input events
+                    let r = Region::new(&compositor_state)
                         .expect("Failed to create input region for unfocusing overlay");
                     s.set_input_region(Some(r.wl_region()));
                     l.set_keyboard_interactivity(KeyboardInteractivity::None);
                 } else {
-                    // NULL region means the surface receives no input events
+                    // None region: the surface receives input events across its entire area
                     s.set_input_region(None);
                     l.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
                 }
@@ -176,9 +177,9 @@ impl waydoodle::OverlayController for App {
 
     fn overlay_status(&self) -> waydoodle::OverlayStatus {
         match &self.overlay {
-            Some(OverlayStatus::Ready(_)) => waydoodle::OverlayStatus::Ready,
-            Some(OverlayStatus::Pending(_)) => waydoodle::OverlayStatus::Pending,
-            None => waydoodle::OverlayStatus::None,
+            OverlaySlot::Empty => waydoodle::OverlayStatus::None,
+            OverlaySlot::Ready(_) => waydoodle::OverlayStatus::Ready,
+            OverlaySlot::Pending(_) => waydoodle::OverlayStatus::Pending,
         }
     }
 }
@@ -187,11 +188,9 @@ impl App {
     pub(crate) fn on_configure(&mut self, width: u32, height: u32) {
         let (width, height) = (width as i32, height as i32);
         match &mut self.overlay {
-            Some(OverlayStatus::Pending(_)) => {
+            OverlaySlot::Pending(_) => {
                 // Transition Pending → Ready: take the Window out and build the full Overlay.
-                let Some(OverlayStatus::Pending(window)) = self.overlay.take() else {
-                    unreachable!();
-                };
+                let window = self.overlay.take_pending_window();
                 let (pool, buffers) =
                     Self::create_overlay_pool_and_buffers(&self.wayland.shm, width, height);
                 let mut overlay = Overlay {
@@ -208,9 +207,9 @@ impl App {
                 if let Some(damage) = overlay.state.take_damage() {
                     overlay.mark_dirty(&self.queue_handle, damage);
                 }
-                self.overlay = Some(OverlayStatus::Ready(overlay));
+                self.overlay = OverlaySlot::Ready(overlay);
             }
-            Some(OverlayStatus::Ready(overlay))
+            OverlaySlot::Ready(overlay)
                 if width != overlay.width() || height != overlay.height() =>
             {
                 log::debug!(

@@ -8,7 +8,6 @@ use wayland_protocols::wp::tablet::zv2::client::{
 };
 
 use crate::waydoodle::{CursorShape, InputButton};
-use crate::wayland::OverlayStatus;
 use crate::{canvas::Point, wayland::App};
 
 use super::cursors::TabletCursorState;
@@ -71,24 +70,19 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for App {
                     tool: tool.clone(),
                     serial,
                 });
-                if let Some(OverlayStatus::Ready(overlay)) = state.overlay.as_mut() {
+                if let Some(overlay) = state.overlay_ready_mut() {
                     overlay.state.on_tablet_enter();
-                    tablet.shape = None; // force update of cursor shape
-                    state.update_overlay_after_event();
+                    state.update_overlay_after_event(true);
                 }
             }
             zwp_tablet_tool_v2::Event::ProximityOut => {
-                let Some(tablet) = state
-                    .tablets
-                    .iter_mut()
-                    .find(|t| t.active_tool.as_ref().is_some_and(|a| &a.tool == tool))
-                else {
+                let Some(tablet) = state.find_tablet_for_tool_mut(tool) else {
                     return;
                 };
                 tablet.active_tool = None;
-                if let Some(OverlayStatus::Ready(overlay)) = state.overlay.as_mut() {
+                if let Some(overlay) = state.overlay_ready_mut() {
                     overlay.state.on_tablet_leave();
-                    state.update_overlay_after_event();
+                    state.update_overlay_after_event(false);
                 }
             }
             zwp_tablet_tool_v2::Event::Button {
@@ -96,17 +90,14 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for App {
                 button: btn,
                 ..
             } => {
-                let Some(tablet) = state
-                    .tablets
-                    .iter_mut()
-                    .find(|t| t.active_tool.as_ref().is_some_and(|a| &a.tool == tool))
-                else {
+                let Some(tablet) = state.find_tablet_for_tool(tool) else {
                     return;
                 };
+                let pos = tablet.pos;
                 let pressed = btn_state
                     .into_result()
                     .is_ok_and(|s| s == ButtonState::Pressed);
-                if let Some(OverlayStatus::Ready(overlay)) = state.overlay.as_mut() {
+                if let Some(overlay) = state.overlay_ready_mut() {
                     // from linux/input-event-codes.h
                     const BTN_STYLUS: u32 = 0x14b;
                     let input_btn = if btn == BTN_STYLUS {
@@ -116,58 +107,49 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for App {
                     };
                     overlay
                         .state
-                        .on_tablet_button(tablet.pos, input_btn, pressed)
+                        .on_tablet_button(pos, input_btn, pressed)
                         .expect("Failed to handle tablet button event");
-                    state.update_overlay_after_event();
+                    state.update_overlay_after_event(false);
                 }
             }
             zwp_tablet_tool_v2::Event::Down { .. } => {
-                let Some(tablet) = state
-                    .tablets
-                    .iter_mut()
-                    .find(|t| t.active_tool.as_ref().is_some_and(|a| &a.tool == tool))
-                else {
+                let Some(tablet) = state.find_tablet_for_tool(tool) else {
                     return;
                 };
-                if let Some(OverlayStatus::Ready(overlay)) = state.overlay.as_mut() {
+                let pos = tablet.pos;
+                if let Some(overlay) = state.overlay_ready_mut() {
                     overlay
                         .state
-                        .on_tablet_down(tablet.pos)
+                        .on_tablet_down(pos)
                         .expect("Failed to handle tablet down event");
-                    state.update_overlay_after_event();
+                    state.update_overlay_after_event(false);
                 }
             }
             zwp_tablet_tool_v2::Event::Up => {
-                let Some(tablet) = state
-                    .tablets
-                    .iter_mut()
-                    .find(|t| t.active_tool.as_ref().is_some_and(|a| &a.tool == tool))
-                else {
+                let Some(tablet) = state.find_tablet_for_tool(tool) else {
                     return;
                 };
-                if let Some(OverlayStatus::Ready(overlay)) = state.overlay.as_mut() {
+                let pos = tablet.pos;
+                if let Some(overlay) = state.overlay_ready_mut() {
                     overlay
                         .state
-                        .on_tablet_up(tablet.pos)
+                        .on_tablet_up(pos)
                         .expect("Failed to handle tablet up event");
-                    state.update_overlay_after_event();
+                    state.update_overlay_after_event(false);
                 }
             }
             zwp_tablet_tool_v2::Event::Motion { x, y } => {
-                let Some(tablet) = state
-                    .tablets
-                    .iter_mut()
-                    .find(|t| t.active_tool.as_ref().is_some_and(|a| &a.tool == tool))
-                else {
+                let Some(tablet) = state.find_tablet_for_tool_mut(tool) else {
                     return;
                 };
-                tablet.pos = Point { x, y };
-                if let Some(OverlayStatus::Ready(overlay)) = state.overlay.as_mut() {
+                let pos = Point { x, y };
+                tablet.pos = pos;
+                if let Some(overlay) = state.overlay_ready_mut() {
                     overlay
                         .state
-                        .on_tablet_motion(tablet.pos)
+                        .on_tablet_motion(pos)
                         .expect("Failed to handle tablet motion event");
-                    state.update_overlay_after_event();
+                    state.update_overlay_after_event(false);
                 }
             }
             zwp_tablet_tool_v2::Event::Removed => {
@@ -180,6 +162,26 @@ impl Dispatch<zwp_tablet_tool_v2::ZwpTabletToolV2, ()> for App {
             }
             _ => {}
         }
+    }
+}
+
+impl App {
+    fn find_tablet_for_tool_mut(
+        &mut self,
+        tool: &zwp_tablet_tool_v2::ZwpTabletToolV2,
+    ) -> Option<&mut TabletState> {
+        self.tablets
+            .iter_mut()
+            .find(|t| t.active_tool.as_ref().is_some_and(|a| &a.tool == tool))
+    }
+
+    fn find_tablet_for_tool(
+        &self,
+        tool: &zwp_tablet_tool_v2::ZwpTabletToolV2,
+    ) -> Option<&TabletState> {
+        self.tablets
+            .iter()
+            .find(|t| t.active_tool.as_ref().is_some_and(|a| &a.tool == tool))
     }
 }
 

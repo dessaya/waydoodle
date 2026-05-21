@@ -20,14 +20,14 @@ use smithay_client_toolkit::{
 };
 use wayland_client::{
     Connection, Proxy, QueueHandle,
-    protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_surface},
+    protocol::{
+        wl_keyboard, wl_output,
+        wl_pointer::{self, WlPointer},
+        wl_seat, wl_surface,
+    },
 };
 
-use crate::{
-    canvas::Point,
-    waydoodle::InputButton,
-    wayland::{App, OverlayStatus},
-};
+use crate::{canvas::Point, waydoodle::InputButton, wayland::App};
 
 use super::{PointerState, cursors::TabletCursorState, tablet::TabletState};
 
@@ -57,9 +57,9 @@ impl CompositorHandler for App {
         _surface: &wl_surface::WlSurface,
         _time: u32,
     ) {
-        if let Some(OverlayStatus::Ready(o)) = self.overlay.as_mut() {
-            o.on_frame_callback(qh)
-        }
+        if let Some(overlay) = self.overlay_ready_mut() {
+            overlay.on_frame_callback(qh);
+        };
     }
 
     fn surface_enter(
@@ -288,14 +288,14 @@ impl KeyboardHandler for App {
         _serial: u32,
         event: KeyEvent,
     ) {
-        let Some(OverlayStatus::Ready(overlay)) = self.overlay.as_mut() else {
+        let Some(overlay) = self.overlay_ready_mut() else {
             return;
         };
         overlay
             .state
             .on_key_pressed(event.keysym)
             .expect("Failed to handle key press event");
-        self.update_overlay_after_event();
+        self.update_overlay_after_event(false);
     }
 
     fn repeat_key(
@@ -339,9 +339,8 @@ impl PointerHandler for App {
         pointer: &wl_pointer::WlPointer,
         events: &[PointerEvent],
     ) {
-        let window_surface_id = match self.overlay.as_ref() {
-            Some(s) => s.window().wl_surface().id(),
-            None => return,
+        let Some(window_surface_id) = self.overlay.window().map(|w| w.wl_surface().id()) else {
+            return;
         };
 
         for event in events {
@@ -351,41 +350,29 @@ impl PointerHandler for App {
 
             match event.kind {
                 PointerEventKind::Enter { serial } => {
-                    let Some(ptr) = self.pointers.iter_mut().find(|p| &p.wl_pointer == pointer)
-                    else {
+                    let Some(ptr) = self.find_pointer_mut(pointer) else {
                         continue;
                     };
                     ptr.enter_serial = serial;
-                    if let Some(OverlayStatus::Ready(overlay)) = self.overlay.as_mut() {
+                    if let Some(overlay) = self.overlay_ready_mut() {
                         overlay.state.on_pointer_enter();
-                        ptr.shape = None; // force update cursor on enter
-                        self.update_overlay_after_event();
+                        self.update_overlay_after_event(true);
                     }
                 }
                 PointerEventKind::Leave { .. } => {
-                    if self
-                        .pointers
-                        .iter()
-                        .find(|p| &p.wl_pointer == pointer)
-                        .is_none()
-                    {
+                    if !self.pointers.iter().any(|p| &p.wl_pointer == pointer) {
                         continue;
                     };
-                    if let Some(OverlayStatus::Ready(overlay)) = self.overlay.as_mut() {
+                    if let Some(overlay) = self.overlay_ready_mut() {
                         overlay.state.on_pointer_leave();
-                        self.update_overlay_after_event();
+                        self.update_overlay_after_event(false);
                     }
                 }
                 PointerEventKind::Motion { .. } => {
-                    if self
-                        .pointers
-                        .iter()
-                        .find(|p| &p.wl_pointer == pointer)
-                        .is_none()
-                    {
+                    if !self.pointers.iter().any(|p| &p.wl_pointer == pointer) {
                         continue;
                     };
-                    if let Some(OverlayStatus::Ready(overlay)) = self.overlay.as_mut() {
+                    if let Some(overlay) = self.overlay_ready_mut() {
                         let pos = Point {
                             x: event.position.0,
                             y: event.position.1,
@@ -394,7 +381,7 @@ impl PointerHandler for App {
                             .state
                             .on_pointer_motion(pos)
                             .expect("Failed to handle pointer motion event");
-                        self.update_overlay_after_event();
+                        self.update_overlay_after_event(false);
                     }
                 }
                 PointerEventKind::Press { button, .. } => {
@@ -409,37 +396,38 @@ impl PointerHandler for App {
                     let Some((input_btn, pos)) = input_btn_pos(button, event) else {
                         continue;
                     };
-                    if let Some(OverlayStatus::Ready(overlay)) = self.overlay.as_mut() {
+                    if let Some(overlay) = self.overlay_ready_mut() {
                         overlay
                             .state
                             .on_pointer_button_pressed(pos, input_btn)
                             .expect("Failed to handle pointer button press event");
-                        self.update_overlay_after_event();
+                        self.update_overlay_after_event(false);
                     }
                 }
                 PointerEventKind::Release { button, .. } => {
-                    if self
-                        .pointers
-                        .iter()
-                        .find(|p| &p.wl_pointer == pointer)
-                        .is_none()
-                    {
+                    if !self.pointers.iter().any(|p| &p.wl_pointer == pointer) {
                         continue;
                     };
                     let Some((input_btn, pos)) = input_btn_pos(button, event) else {
                         continue;
                     };
-                    if let Some(OverlayStatus::Ready(overlay)) = self.overlay.as_mut() {
+                    if let Some(overlay) = self.overlay_ready_mut() {
                         overlay
                             .state
                             .on_pointer_button_released(pos, input_btn)
                             .expect("Failed to handle pointer button release event");
-                        self.update_overlay_after_event();
+                        self.update_overlay_after_event(false);
                     }
                 }
                 PointerEventKind::Axis { .. } => {}
             }
         }
+    }
+}
+
+impl App {
+    fn find_pointer_mut(&mut self, pointer: &WlPointer) -> Option<&mut PointerState> {
+        self.pointers.iter_mut().find(|p| &p.wl_pointer == pointer)
     }
 }
 

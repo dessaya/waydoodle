@@ -136,7 +136,7 @@ fn build_row_menu_item(id: usize, label: &'static str, action: Action) -> RowMen
                 None
             }
         })
-        .unwrap();
+        .unwrap_or("");
     RowMenuItem {
         label,
         btn: MenuButton {
@@ -455,12 +455,17 @@ impl ContextMenu {
         Ok(())
     }
 
-    /// Returns an iterator of MenuButtons
     fn buttons(&self) -> impl Iterator<Item = &MenuButton> {
-        self.components.iter().flat_map(|comp| match comp {
-            MenuComponent::Category { items, .. } => items.iter().map(|item| &item.btn).collect(),
-            MenuComponent::Item(item) => vec![&item.btn],
-        })
+        self.components
+            .iter()
+            .flat_map(|comp| -> Box<dyn Iterator<Item = &MenuButton>> {
+                match comp {
+                    MenuComponent::Category { items, .. } => {
+                        Box::new(items.iter().map(|item| &item.btn))
+                    }
+                    MenuComponent::Item(item) => Box::new(std::iter::once(&item.btn)),
+                }
+            })
     }
 
     /// Update the hovered button based on the pointer position.
@@ -468,7 +473,8 @@ impl ContextMenu {
     pub fn update_hover(&mut self, pos: Point) -> bool {
         let new_hover = self
             .buttons()
-            .position(|btn| btn.hit(pos.x as i32, pos.y as i32));
+            .find(|btn| btn.hit(pos.x as i32, pos.y as i32))
+            .map(|btn| btn.id);
         if new_hover != self.hover {
             self.hover = new_hover;
             true

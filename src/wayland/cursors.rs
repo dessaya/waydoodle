@@ -136,14 +136,14 @@ impl CursorSurface {
 }
 
 impl App {
-    pub(super) fn apply_cursor(&mut self, shape: CursorShape) {
-        self.set_pointer_cursor(shape);
-        self.set_tablet_cursor(shape);
+    pub(super) fn apply_cursor(&mut self, shape: CursorShape, force: bool) {
+        self.set_pointer_cursor(shape, force);
+        self.set_tablet_cursor(shape, force);
     }
 
-    fn set_pointer_cursor(&mut self, shape: CursorShape) {
+    fn set_pointer_cursor(&mut self, shape: CursorShape, force: bool) {
         for ptr in self.pointers.iter_mut() {
-            if ptr.shape == Some(shape) {
+            if !force && ptr.shape == Some(shape) {
                 continue;
             }
             ptr.shape = Some(shape);
@@ -167,9 +167,9 @@ impl App {
         }
     }
 
-    fn set_tablet_cursor(&mut self, shape: CursorShape) {
+    fn set_tablet_cursor(&mut self, shape: CursorShape, force: bool) {
         for tablet in &mut self.tablets {
-            if tablet.shape == Some(shape) {
+            if !force && tablet.shape == Some(shape) {
                 continue;
             }
             let active = match tablet.active_tool.as_ref() {

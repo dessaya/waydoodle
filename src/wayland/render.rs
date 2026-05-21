@@ -39,11 +39,9 @@ impl Overlay {
         }
 
         for y in y0..y1 {
-            let row_offset = y * stride;
-            for x in x0..x1 {
-                let off = row_offset + x * 4;
-                shm_buf[off..off + 4].copy_from_slice(&canvas_buf[off..off + 4]);
-            }
+            let start = y * stride + x0 * 4;
+            let end = y * stride + x1 * 4;
+            shm_buf[start..end].copy_from_slice(&canvas_buf[start..end]);
         }
     }
 
