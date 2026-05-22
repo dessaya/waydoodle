@@ -3,6 +3,8 @@
 A minimalistic Wayland screen annotation tool. Draw on your screen during
 presentations, demos, or video calls — on any Wayland compositor.
 
+![Waydoodle screenshot](./screenshot.png)
+
 Waydoodle is similar to other tools like
 [Gromit-MPX](https://github.com/bk138/gromit-mpx) or
 [Wayscriber](https://wayscriber.com/), but with a focus on simplicity and ease
