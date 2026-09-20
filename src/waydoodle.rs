@@ -102,7 +102,7 @@ impl OverlayState {
         self.override_tool.unwrap_or(self.primary_tool)
     }
 
-    fn apply_action(&mut self, action: Action) -> Result<()> {
+    pub(crate) fn apply_action(&mut self, action: Action) -> Result<()> {
         match action {
             Action::SetTool(tool) => {
                 self.primary_tool = tool;

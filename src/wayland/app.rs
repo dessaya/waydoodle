@@ -17,6 +17,7 @@ use wayland_protocols::wp::tablet::zv2::client::zwp_tablet_manager_v2;
 
 use super::{WaylandState, cursors::Cursors};
 use crate::{
+    actions::GlobalAction,
     tray::{TrayEvent, WaydoodleTray},
     waydoodle::OverlayController,
     wayland::{App, Overlay, OverlaySlot},
@@ -131,10 +132,10 @@ impl App {
                     };
                     match tray_event {
                         TrayEvent::ToggleOverlay => {
-                            app.on_toggle_overlay();
+                            app.apply_global_action(GlobalAction::ToggleOverlay);
                         }
                         TrayEvent::CloseOverlay => {
-                            app.destroy_overlay();
+                            app.apply_global_action(GlobalAction::CloseOverlay);
                         }
                         TrayEvent::Quit => {
                             loop_signal.stop();
@@ -151,6 +152,24 @@ impl App {
         // Shut down the tray service on exit.
         if let Some(handle) = app.tray_handle.take() {
             handle.shutdown();
+        }
+    }
+
+    pub(crate) fn apply_global_action(&mut self, action: GlobalAction) {
+        match action {
+            GlobalAction::ToggleOverlay => self.on_toggle_overlay(),
+            GlobalAction::CloseOverlay => self.destroy_overlay(),
+            GlobalAction::Overlay(action) => {
+                let Some(overlay) = self.overlay_ready_mut() else {
+                    log::debug!("No overlay: ignoring {action:?}");
+                    return;
+                };
+                overlay
+                    .state
+                    .apply_action(action)
+                    .expect("Failed to apply action");
+                self.update_overlay_after_event(false);
+            }
         }
     }
 
