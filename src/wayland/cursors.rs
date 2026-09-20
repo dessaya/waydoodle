@@ -114,10 +114,11 @@ impl CursorSurface {
             .expect("Failed to create cursor buffer");
 
         // The input is RGBA; Wayland's Argb8888 expects ARGB in native byte order.
-        for (src, dst) in rgba.chunks_exact(4).zip(canvas.chunks_exact_mut(4)) {
-            let [r, g, b, a] = [src[0], src[1], src[2], src[3]];
-            let pixel = u32::from_be_bytes([a, r, g, b]);
-            dst.copy_from_slice(&pixel.to_ne_bytes());
+        let (src_pixels, _) = rgba.as_chunks::<4>();
+        let (dst_pixels, _) = canvas.as_chunks_mut::<4>();
+        for (src, dst) in src_pixels.iter().zip(dst_pixels) {
+            let [r, g, b, a] = *src;
+            *dst = u32::from_be_bytes([a, r, g, b]).to_ne_bytes();
         }
 
         let surface = compositor.create_surface(qh);
