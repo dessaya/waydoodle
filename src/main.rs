@@ -1,5 +1,6 @@
 mod actions;
 mod canvas;
+mod pad;
 mod tray;
 mod ui;
 mod waydoodle;

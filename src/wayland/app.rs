@@ -1,4 +1,5 @@
 use calloop::{
+    LoopHandle,
     channel::Event,
     signals::{Signal, Signals},
 };
@@ -17,7 +18,8 @@ use wayland_protocols::wp::tablet::zv2::client::zwp_tablet_manager_v2;
 
 use super::{WaylandState, cursors::Cursors};
 use crate::{
-    actions::GlobalAction,
+    actions::{GlobalAccels, GlobalAction, GlobalTrigger},
+    pad::{self, PadHost, Pads},
     tray::{TrayEvent, WaydoodleTray},
     waydoodle::OverlayController,
     wayland::{App, Overlay, OverlaySlot},
@@ -97,6 +99,8 @@ impl App {
             pointers: Vec::new(),
             tablets: Vec::new(),
             tablet_manager,
+            global_accels: GlobalAccels::default(),
+            pads: Pads::default(),
             cursors,
             overlay: OverlaySlot::Empty,
             tray_handle,
@@ -144,6 +148,8 @@ impl App {
                 })
                 .expect("Failed to insert tray event source");
         }
+
+        pad::listen(&mut app);
 
         event_loop
             .run(None, &mut app, |_| {})
@@ -193,6 +199,23 @@ impl App {
         match &mut self.overlay {
             OverlaySlot::Ready(overlay) => Some(overlay),
             _ => None,
+        }
+    }
+}
+
+impl PadHost for App {
+    fn loop_handle(&self) -> LoopHandle<'static, Self> {
+        self.loop_handle.clone()
+    }
+
+    fn pads(&mut self) -> &mut Pads {
+        &mut self.pads
+    }
+
+    fn on_pad_button(&mut self, button: u32) {
+        match self.global_accels.get(GlobalTrigger::PadButton(button)) {
+            Some(action) => self.apply_global_action(action),
+            None => log::debug!("Pad button {button} is not bound"),
         }
     }
 }

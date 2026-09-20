@@ -28,6 +28,8 @@ use wayland_protocols::wp::{
 };
 
 use crate::{
+    actions::GlobalAccels,
+    pad::Pads,
     tray::WaydoodleTray,
     waydoodle::CursorShape,
     wayland::overlay::{Overlay, WaylandWindow},
@@ -105,6 +107,8 @@ pub(crate) struct App {
     pointers: Vec<PointerState>,
     tablets: Vec<TabletState>,
     tablet_manager: Option<zwp_tablet_manager_v2::ZwpTabletManagerV2>,
+    global_accels: GlobalAccels,
+    pads: Pads,
     tray_handle: Option<Handle<WaydoodleTray>>,
     loop_handle: calloop::LoopHandle<'static, Self>,
     queue_handle: wayland_client::QueueHandle<Self>,
