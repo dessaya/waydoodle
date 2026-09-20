@@ -4,7 +4,7 @@ use cairo::{
 use smithay_client_toolkit::seat::keyboard::Keysym;
 
 use crate::{
-    actions::{Action, FocusDirection, GLOBAL_ACCELS, NO_MENU_ACCELS},
+    actions::{ANY_MENU_ACCELS, Action, FocusDirection, NO_MENU_ACCELS},
     canvas::{Color, Point, Rectangle},
     waydoodle::{InputButton, Result, Tool},
 };
@@ -84,7 +84,7 @@ fn build_pen_tool_selector(next_id: &mut impl FnMut() -> usize) -> ToolSelector 
     build_tool_selector(
         "Pen",
         next_id,
-        GLOBAL_ACCELS
+        ANY_MENU_ACCELS
             .iter()
             .filter_map(|(keysym, action)| match action {
                 Action::SetTool(Tool::Pen(color)) => Some((
@@ -116,7 +116,7 @@ fn build_background_tool_selector(next_id: &mut impl FnMut() -> usize) -> ToolSe
     build_tool_selector(
         "Background",
         next_id,
-        GLOBAL_ACCELS
+        ANY_MENU_ACCELS
             .iter()
             .filter_map(|(keysym, action)| match action {
                 Action::SetBackground(color) => Some((
@@ -160,7 +160,7 @@ fn build_row_menu_item(
     label: &'static str,
     action: Action,
 ) -> RowMenuItem {
-    let accel = GLOBAL_ACCELS
+    let accel = ANY_MENU_ACCELS
         .iter()
         .chain(NO_MENU_ACCELS.iter())
         .find_map(|(keysym, a)| {

@@ -1,7 +1,7 @@
 use smithay_client_toolkit::seat::keyboard::Keysym;
 
 use crate::{
-    actions::{Action, GLOBAL_ACCELS, MENU_ACCELS, NO_MENU_ACCELS},
+    actions::{ANY_MENU_ACCELS, Action, MENU_ACCELS, NO_MENU_ACCELS},
     canvas::{Canvas, Color, Point, Rectangle},
     ui::{self, UI},
 };
@@ -177,7 +177,7 @@ impl OverlayState {
     }
 
     fn match_accel(&self, keysym: Keysym) -> Option<Action> {
-        GLOBAL_ACCELS
+        ANY_MENU_ACCELS
             .iter()
             .chain(if self.ui.is_context_menu_open() {
                 MENU_ACCELS.iter()
