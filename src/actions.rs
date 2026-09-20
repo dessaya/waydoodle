@@ -116,8 +116,9 @@ mod tests {
 
     #[test]
     fn default_accels_cover_the_first_six_pad_buttons() {
-        let accels = GlobalAccels::default();
         use GlobalTrigger::PadButton;
+
+        let accels = GlobalAccels::default();
         assert_eq!(accels.get(PadButton(0)), Some(GlobalAction::ToggleOverlay));
         assert_eq!(accels.get(PadButton(1)), Some(GlobalAction::CloseOverlay));
         assert_eq!(

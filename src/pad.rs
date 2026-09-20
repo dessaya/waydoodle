@@ -171,8 +171,7 @@ fn is_pad(device: &udev::Device) -> bool {
 
 struct Pad {
     device: Device,
-    /// Button key codes in ascending order. A button is identified by its
-    /// index here, which is also how libinput numbers pad buttons.
+    /// Button key codes, in ascending order.
     buttons: Vec<KeyCode>,
 }
 
@@ -222,7 +221,8 @@ impl Pad {
     /// Reads the pending events, returning the buttons that were pressed. An
     /// error means the device is gone.
     fn read_pressed_buttons(&mut self) -> io::Result<Vec<u32>> {
-        let events = match self.device.fetch_events() {
+        let Self { device, buttons } = self;
+        let events = match device.fetch_events() {
             Ok(events) => events,
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(Vec::new()),
             Err(e) => return Err(e),
@@ -231,14 +231,21 @@ impl Pad {
         for event in events {
             // 1 is a press; 0 is a release and 2 is auto-repeat.
             if let EventSummary::Key(_, code, 1) = event.destructure() {
-                match self.buttons.iter().position(|button| *button == code) {
-                    Some(button) => pressed.push(button as u32),
+                match button_number(buttons, code) {
+                    Some(button) => pressed.push(button),
                     None => log::trace!("Ignoring key {code:?}"),
                 }
             }
         }
         Ok(pressed)
     }
+}
+
+/// A button is identified by the index of its key code, which is also how
+/// libinput numbers pad buttons.
+fn button_number(buttons: &[KeyCode], code: KeyCode) -> Option<u32> {
+    let index = buttons.iter().position(|button| *button == code)?;
+    u32::try_from(index).ok()
 }
 
 impl AsFd for Pad {
@@ -260,5 +267,18 @@ mod tests {
         for code in [0x110, 0x111, 0x14b] {
             assert!(!is_pad_button(KeyCode(code)), "{code:#x}");
         }
+    }
+
+    #[test]
+    fn buttons_are_numbered_by_key_code_order() {
+        // A tablet with contiguous key codes, like the Huion H640P.
+        let buttons: Vec<KeyCode> = (0x100..=0x108).map(KeyCode).collect();
+        assert_eq!(button_number(&buttons, KeyCode(0x100)), Some(0));
+        assert_eq!(button_number(&buttons, KeyCode(0x105)), Some(5));
+        assert_eq!(button_number(&buttons, KeyCode(0x109)), None);
+
+        // A tablet with gaps between them.
+        let buttons = [KeyCode(0x100), KeyCode(0x101), KeyCode(0x130)];
+        assert_eq!(button_number(&buttons, KeyCode(0x130)), Some(2));
     }
 }

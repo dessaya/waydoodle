@@ -13,6 +13,7 @@ of use. Some of its features include:
 - Tray icon with menu
 - Global shortcut (see [below](#global-shortcut))
 - Mouse & tablet support
+- Tablet pad buttons
 - Context menu
 - Undo
 
@@ -27,6 +28,9 @@ git clone https://github.com/dessaya/waydoodle.git
 cd waydoodle
 cargo install --path .
 ```
+
+Building requires the udev development files: they are part of `systemd` on
+Arch, `libudev-dev` on Debian and Ubuntu, and `systemd-devel` on Fedora.
 
 ### Arch Linux (AUR)
 
@@ -81,6 +85,46 @@ While the overlay is focused, just draw with your mouse or tablet.
 | <kbd>/</kbd> | Transparent background |
 | <kbd>u</kbd> | Undo |
 | <kbd>Esc</kbd> | Close overlay |
+
+## Tablet pad buttons
+
+If your drawing tablet has buttons on its side, Waydoodle can listen to them
+directly:
+
+```
+waydoodle --tablet-pad
+```
+
+| Button | Action |
+|--------|--------|
+| 0 | Toggle overlay |
+| 1 | Close overlay |
+| 2 | Eraser |
+| 3 | Red pen |
+| 4 | Green pen |
+| 5 | Magenta pen |
+
+The buttons are numbered the way `libinput debug-events` reports them. The
+bindings are not configurable yet, and neither is the `--tablet-pad` flag
+permanent: both will be replaced by a configuration file.
+
+Waydoodle reads the pad device directly instead of going through the
+compositor, because the Wayland tablet protocol is not implemented by every
+compositor (niri, for instance, never sends pad events to clients), and where
+it is, the buttons only work while the overlay is focused — which is of no use
+for the button that is supposed to bring it up.
+
+This means your user needs permission to read the tablet pad device, which on
+most distributions means being a member of the `input` group:
+
+```
+sudo usermod -aG input $USER
+```
+
+Log out and back in for it to take effect.
+
+If the buttons do nothing, run Waydoodle with `RUST_LOG=waydoodle=debug` to see
+which pads it found and which buttons they report.
 
 ## Global shortcuts
 

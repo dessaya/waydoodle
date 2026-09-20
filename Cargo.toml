@@ -23,7 +23,7 @@ udev = "0.9"
 evdev = "0.13"
 
 [package.metadata.deb]
-depends = "libc6, libwayland-client0"
+depends = "libc6, libwayland-client0, libudev1"
 section = "graphics"
 assets = [
     ["target/release/waydoodle", "usr/bin/", "755"],

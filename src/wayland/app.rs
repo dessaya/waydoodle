@@ -18,6 +18,7 @@ use wayland_protocols::wp::tablet::zv2::client::zwp_tablet_manager_v2;
 
 use super::{WaylandState, cursors::Cursors};
 use crate::{
+    Options,
     actions::{GlobalAccels, GlobalAction, GlobalTrigger},
     pad::{self, PadHost, Pads},
     tray::{TrayEvent, WaydoodleTray},
@@ -26,7 +27,7 @@ use crate::{
 };
 
 impl App {
-    pub(crate) fn run() {
+    pub(crate) fn run(options: &Options) {
         // Block signals before spawning any background threads (e.g. the tray)
         // so they inherit the blocked mask. Signals::new() calls sigprocmask.
         let signals =
@@ -149,7 +150,9 @@ impl App {
                 .expect("Failed to insert tray event source");
         }
 
-        pad::listen(&mut app);
+        if options.tablet_pad {
+            pad::listen(&mut app);
+        }
 
         event_loop
             .run(None, &mut app, |_| {})
