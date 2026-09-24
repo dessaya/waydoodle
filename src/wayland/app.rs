@@ -19,7 +19,8 @@ use wayland_protocols::wp::tablet::zv2::client::zwp_tablet_manager_v2;
 use super::{WaylandState, cursors::Cursors};
 use crate::{
     Options,
-    actions::{GlobalAccels, GlobalAction, GlobalTrigger},
+    actions::{GlobalAction, GlobalTrigger},
+    config,
     pad::{self, PadHost, Pads},
     tray::{TrayEvent, WaydoodleTray},
     waydoodle::OverlayController,
@@ -32,6 +33,8 @@ impl App {
         // so they inherit the blocked mask. Signals::new() calls sigprocmask.
         let signals =
             Signals::new(&[Signal::SIGUSR1, Signal::SIGUSR2]).expect("Failed to register signals");
+
+        let config = config::load(options.config.as_deref());
 
         let conn = Connection::connect_to_env().expect("Failed to connect to Wayland compositor");
         let (globals, event_queue) =
@@ -100,7 +103,7 @@ impl App {
             pointers: Vec::new(),
             tablets: Vec::new(),
             tablet_manager,
-            global_accels: GlobalAccels::default(),
+            global_accels: config.pad.accels(),
             pads: Pads::default(),
             cursors,
             overlay: OverlaySlot::Empty,
@@ -150,7 +153,7 @@ impl App {
                 .expect("Failed to insert tray event source");
         }
 
-        if options.tablet_pad {
+        if options.tablet_pad.unwrap_or(config.pad.enabled) {
             pad::listen(&mut app);
         }
 

@@ -172,7 +172,13 @@ impl GlobalAccels {
 
 impl Default for GlobalAccels {
     fn default() -> Self {
-        Self(DEFAULT_GLOBAL_ACCELS.iter().copied().collect())
+        DEFAULT_GLOBAL_ACCELS.iter().copied().collect()
+    }
+}
+
+impl FromIterator<(GlobalTrigger, GlobalAction)> for GlobalAccels {
+    fn from_iter<I: IntoIterator<Item = (GlobalTrigger, GlobalAction)>>(iter: I) -> Self {
+        Self(iter.into_iter().collect())
     }
 }
 

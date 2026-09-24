@@ -36,7 +36,11 @@ pub(crate) fn listen<H: PadHost>(host: &mut H) {
         Ok(monitor) => watch_device_changes(host, monitor),
         Err(e) => log::warn!("Failed to watch for tablet pads: {e}"),
     }
-    for devnode in enumerate() {
+    let devnodes = enumerate();
+    if devnodes.is_empty() {
+        log::debug!("No tablet pads found");
+    }
+    for devnode in devnodes {
         add(host, &devnode);
     }
 }

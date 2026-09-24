@@ -21,6 +21,8 @@ ksni = { version = "0.3", default-features = false, features = ["blocking", "asy
 cairo-rs = { version = "0.22.0", default-features = false }
 udev = "0.9"
 evdev = "0.13"
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.1.6"
 
 [package.metadata.deb]
 depends = "libc6, libwayland-client0, libudev1"
