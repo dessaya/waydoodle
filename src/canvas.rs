@@ -1,3 +1,5 @@
+use std::fmt;
+
 use cairo::{Context, ImageSurface, ImageSurfaceData};
 
 use crate::waydoodle::Result;
@@ -44,6 +46,49 @@ impl Color {
         g: 0,
         b: 0,
     };
+
+    const NAMED: &[(&str, Color)] = &[
+        ("red", Self::RED),
+        ("green", Self::GREEN),
+        ("blue", Self::BLUE),
+        ("yellow", Self::YELLOW),
+        ("magenta", Self::MAGENTA),
+        ("cyan", Self::CYAN),
+        ("black", Self::BLACK),
+        ("white", Self::WHITE),
+        ("transparent", Self::TRANSPARENT),
+    ];
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        if let Some((_, color)) = Self::NAMED.iter().find(|(named, _)| *named == name) {
+            return Some(*color);
+        }
+        let hex = name.strip_prefix('#')?;
+        if !matches!(hex.len(), 6 | 8) {
+            return None;
+        }
+        let byte = |i: usize| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok();
+        Some(Self {
+            r: byte(0)?,
+            g: byte(2)?,
+            b: byte(4)?,
+            a: if hex.len() == 8 { byte(6)? } else { 255 },
+        })
+    }
+}
+
+/// A color name, or `#rrggbb`/`#rrggbbaa` for anything unnamed.
+impl fmt::Display for Color {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some((name, _)) = Color::NAMED.iter().find(|(_, color)| color == self) {
+            return f.write_str(name);
+        }
+        write!(f, "#{:02x}{:02x}{:02x}", self.r, self.g, self.b)?;
+        if self.a != 255 {
+            write!(f, "{:02x}", self.a)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -207,6 +252,45 @@ impl Canvas {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn color_names_round_trip() {
+        for (name, color) in Color::NAMED {
+            assert_eq!(color.to_string(), *name);
+            assert_eq!(Color::from_name(name), Some(*color));
+        }
+    }
+
+    #[test]
+    fn unnamed_colors_use_hex() {
+        let opaque = Color::rgb(0x12, 0x34, 0x56);
+        assert_eq!(opaque.to_string(), "#123456");
+        assert_eq!(Color::from_name("#123456"), Some(opaque));
+
+        let translucent = Color {
+            a: 0x80,
+            r: 0x12,
+            g: 0x34,
+            b: 0x56,
+        };
+        assert_eq!(translucent.to_string(), "#12345680");
+        assert_eq!(Color::from_name("#12345680"), Some(translucent));
+    }
+
+    #[test]
+    fn invalid_color_names_are_rejected() {
+        for name in [
+            "",
+            "#",
+            "#12345",
+            "#1234567",
+            "#12345g",
+            "123456",
+            "chartreuse",
+        ] {
+            assert_eq!(Color::from_name(name), None, "{name}");
+        }
+    }
 
     // -------------------------------------------------------
     // Canvas::clear
