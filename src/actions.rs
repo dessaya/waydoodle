@@ -104,9 +104,55 @@ pub(crate) enum FocusDirection {
     Left,
     Right,
 }
-/// Accels that are active whether or not the context menu is open.
-/// Accels that are active globally, even when the context menu is open.
-pub(crate) const ANY_MENU_ACCELS: &[(Keysym, Action)] = &[
+
+/// Keyboard accels, active while the overlay is focused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Keybindings {
+    always: Vec<(Keysym, Action)>,
+    menu_closed: Vec<(Keysym, Action)>,
+    menu_open: Vec<(Keysym, Action)>,
+}
+
+impl Keybindings {
+    pub(crate) fn action(&self, keysym: Keysym, menu_open: bool) -> Option<Action> {
+        let modal = if menu_open {
+            &self.menu_open
+        } else {
+            &self.menu_closed
+        };
+        self.always
+            .iter()
+            .chain(modal)
+            .find(|(key, _)| *key == keysym)
+            .map(|(_, action)| *action)
+    }
+
+    /// The key that triggers `action` while the context menu is closed, for
+    /// showing next to it in the menu.
+    pub(crate) fn key(&self, action: Action) -> Option<Keysym> {
+        self.always
+            .iter()
+            .chain(&self.menu_closed)
+            .find(|(_, a)| *a == action)
+            .map(|(key, _)| *key)
+    }
+
+    pub(crate) fn always(&self) -> &[(Keysym, Action)] {
+        &self.always
+    }
+}
+
+impl Default for Keybindings {
+    fn default() -> Self {
+        Self {
+            always: DEFAULT_ACCELS_ALWAYS.to_vec(),
+            menu_closed: DEFAULT_ACCELS_MENU_CLOSED.to_vec(),
+            menu_open: DEFAULT_ACCELS_MENU_OPEN.to_vec(),
+        }
+    }
+}
+
+const DEFAULT_ACCELS_ALWAYS: &[(Keysym, Action)] = &[
     (Keysym::r, Action::SetTool(Tool::Pen(Color::RED))),
     (Keysym::g, Action::SetTool(Tool::Pen(Color::GREEN))),
     (Keysym::b, Action::SetTool(Tool::Pen(Color::BLUE))),
@@ -121,14 +167,12 @@ pub(crate) const ANY_MENU_ACCELS: &[(Keysym, Action)] = &[
     (Keysym::u, Action::Undo),
 ];
 
-/// Accels that are only active when the context menu is closed.
-pub(crate) const NO_MENU_ACCELS: &[(Keysym, Action)] = &[
+const DEFAULT_ACCELS_MENU_CLOSED: &[(Keysym, Action)] = &[
     (Keysym::space, Action::OpenContextMenu),
     (Keysym::Escape, Action::HideOverlay),
 ];
 
-/// Accels that are only active when the context menu is open.
-pub(crate) const MENU_ACCELS: &[(Keysym, Action)] = &[
+const DEFAULT_ACCELS_MENU_OPEN: &[(Keysym, Action)] = &[
     (Keysym::space, Action::CloseContextMenu),
     (Keysym::Escape, Action::CloseContextMenu),
     (Keysym::Right, Action::Focus(FocusDirection::Right)),
@@ -254,6 +298,31 @@ mod tests {
         for name in ["", "pen", "pen-", "pen-chartreuse", "toggle", "menu"] {
             assert_eq!(GlobalAction::from_name(name), None, "{name}");
         }
+    }
+
+    #[test]
+    fn keybindings_depend_on_whether_the_menu_is_open() {
+        let keys = Keybindings::default();
+        assert_eq!(
+            keys.action(Keysym::space, false),
+            Some(Action::OpenContextMenu)
+        );
+        assert_eq!(
+            keys.action(Keysym::space, true),
+            Some(Action::CloseContextMenu)
+        );
+        assert_eq!(keys.action(Keysym::u, false), Some(Action::Undo));
+        assert_eq!(keys.action(Keysym::u, true), Some(Action::Undo));
+        assert_eq!(keys.action(Keysym::Up, false), None);
+    }
+
+    #[test]
+    fn keybindings_find_the_key_shown_in_the_menu() {
+        let keys = Keybindings::default();
+        assert_eq!(keys.key(Action::SetTool(Tool::Eraser)), Some(Keysym::e));
+        assert_eq!(keys.key(Action::HideOverlay), Some(Keysym::Escape));
+        // Only bound while the menu is open, so there is nothing to show.
+        assert_eq!(keys.key(Action::CloseContextMenu), None);
     }
 
     #[test]

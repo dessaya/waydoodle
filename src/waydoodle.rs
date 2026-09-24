@@ -1,7 +1,7 @@
 use smithay_client_toolkit::seat::keyboard::Keysym;
 
 use crate::{
-    actions::{ANY_MENU_ACCELS, Action, MENU_ACCELS, NO_MENU_ACCELS},
+    actions::{Action, Keybindings},
     canvas::{Canvas, Color, Point, Rectangle},
     ui::{self, UI},
 };
@@ -78,11 +78,12 @@ pub(crate) struct OverlayState {
     pub history: Vec<HistoryItem>,
     pub ui: UI,
     pub keep_open: bool,
+    keybindings: Keybindings,
     damage: Vec<Rectangle>,
 }
 
 impl OverlayState {
-    pub fn new(width: i32, height: i32) -> Result<Self> {
+    pub fn new(width: i32, height: i32, keybindings: Keybindings) -> Result<Self> {
         let canvas = Canvas::new(width, height)?;
         let rect = canvas.rect();
         Ok(Self {
@@ -94,6 +95,7 @@ impl OverlayState {
             history: Vec::new(),
             ui: UI::new(width, height)?,
             keep_open: true,
+            keybindings,
             damage: vec![rect],
         })
     }
@@ -129,7 +131,8 @@ impl OverlayState {
                 self.ui.close_context_menu(&self.ui_state())?;
             }
             Action::OpenContextMenu => {
-                self.ui.open_context_menu(&self.ui_state())?;
+                self.ui
+                    .open_context_menu(&self.ui_state(), &self.keybindings)?;
             }
             Action::CloseContextMenu => {
                 self.ui.close_context_menu(&self.ui_state())?;
@@ -176,23 +179,6 @@ impl OverlayState {
         Ok(())
     }
 
-    fn match_accel(&self, keysym: Keysym) -> Option<Action> {
-        ANY_MENU_ACCELS
-            .iter()
-            .chain(if self.ui.is_context_menu_open() {
-                MENU_ACCELS.iter()
-            } else {
-                NO_MENU_ACCELS.iter()
-            })
-            .find_map(|(accel_keysym, action)| {
-                if *accel_keysym == keysym {
-                    Some(*action)
-                } else {
-                    None
-                }
-            })
-    }
-
     fn mark_dirty(&mut self, damage: Rectangle) {
         self.damage.push(damage);
     }
@@ -210,7 +196,8 @@ impl OverlayState {
     }
 
     pub(crate) fn on_key_pressed(&mut self, keysym: Keysym) -> Result<()> {
-        let Some(action) = self.match_accel(keysym) else {
+        let menu_open = self.ui.is_context_menu_open();
+        let Some(action) = self.keybindings.action(keysym, menu_open) else {
             return Ok(());
         };
         self.apply_action(action)?;
@@ -306,7 +293,9 @@ impl OverlayState {
     }
 
     fn on_button_pressed(&mut self, pos: Point, btn: InputButton) -> Result<bool> {
-        let (action, handled) = self.ui.on_button_pressed(&self.ui_state(), pos, btn)?;
+        let (action, handled) =
+            self.ui
+                .on_button_pressed(&self.ui_state(), &self.keybindings, pos, btn)?;
         if let Some(action) = action {
             self.apply_action(action)?;
             self.mark_dirty(self.canvas.rect());
@@ -435,6 +424,10 @@ mod tests {
     const TEST_WIDTH: i32 = 64;
     const TEST_HEIGHT: i32 = 64;
 
+    fn new_overlay_state() -> Result<OverlayState> {
+        OverlayState::new(TEST_WIDTH, TEST_HEIGHT, Keybindings::default())
+    }
+
     struct MockApp {
         overlay: Option<Option<OverlayState>>,
     }
@@ -452,7 +445,7 @@ mod tests {
 
         fn with_overlay() -> Self {
             Self {
-                overlay: Some(Some(OverlayState::new(TEST_WIDTH, TEST_HEIGHT).unwrap())),
+                overlay: Some(Some(new_overlay_state().unwrap())),
             }
         }
     }
@@ -467,7 +460,7 @@ mod tests {
         }
 
         fn create_overlay(&mut self) {
-            self.overlay = Some(Some(OverlayState::new(TEST_WIDTH, TEST_HEIGHT).unwrap()));
+            self.overlay = Some(Some(new_overlay_state().unwrap()));
         }
 
         fn destroy_overlay(&mut self) {
@@ -524,7 +517,7 @@ mod tests {
 
     #[test]
     fn on_key_pressed_r_sets_red_pen() -> Result<()> {
-        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT)?;
+        let mut overlay = new_overlay_state()?;
         let _ = overlay.take_damage();
         overlay.primary_tool = Tool::Eraser;
         overlay.on_key_pressed(Keysym::r)?;
@@ -537,7 +530,7 @@ mod tests {
 
     #[test]
     fn on_key_pressed_e_sets_eraser() -> Result<()> {
-        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT)?;
+        let mut overlay = new_overlay_state()?;
         let _ = overlay.take_damage();
         overlay.on_key_pressed(Keysym::e)?;
         assert!(overlay.keep_open);
@@ -564,7 +557,7 @@ mod tests {
 
     #[test]
     fn on_key_pressed_c_clears_canvas() -> Result<()> {
-        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT)?;
+        let mut overlay = new_overlay_state()?;
         let _ = overlay.take_damage();
         overlay.canvas.fill(Color::RED)?;
 
@@ -578,7 +571,7 @@ mod tests {
 
     #[test]
     fn on_key_pressed_escape_returns_hide() -> Result<()> {
-        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT)?;
+        let mut overlay = new_overlay_state()?;
         let _ = overlay.take_damage();
         overlay.on_key_pressed(Keysym::Escape)?;
         assert!(!overlay.keep_open);
@@ -587,7 +580,7 @@ mod tests {
 
     #[test]
     fn on_key_pressed_unbound_key_changes_nothing() -> Result<()> {
-        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT)?;
+        let mut overlay = new_overlay_state()?;
         let _ = overlay.take_damage();
         let original_tool = overlay.primary_tool;
 
@@ -600,7 +593,7 @@ mod tests {
 
     #[test]
     fn on_pointer_motion_with_pen_draws_pixels() -> Result<()> {
-        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT)?;
+        let mut overlay = new_overlay_state()?;
         let _ = overlay.take_damage();
         overlay.primary_tool = Tool::Pen(Color::RED);
         overlay.on_pointer_button_pressed(Point { x: 10.0, y: 10.0 }, InputButton::Primary)?;
@@ -626,7 +619,7 @@ mod tests {
 
     #[test]
     fn on_pointer_motion_while_not_pressed_returns_none() -> Result<()> {
-        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT)?;
+        let mut overlay = new_overlay_state()?;
         let _ = overlay.take_damage();
 
         overlay.on_pointer_motion(Point { x: 20.0, y: 10.0 })?;
@@ -639,7 +632,7 @@ mod tests {
 
     #[test]
     fn on_pointer_motion_with_eraser_clears_pixels() -> Result<()> {
-        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT)?;
+        let mut overlay = new_overlay_state()?;
         let _ = overlay.take_damage();
         overlay.primary_tool = Tool::Pen(Color::RED);
         overlay.on_pointer_button_pressed(Point { x: 10.0, y: 30.0 }, InputButton::Primary)?;
@@ -663,7 +656,7 @@ mod tests {
 
     #[test]
     fn middle_mouse_button_uses_eraser_tool() -> Result<()> {
-        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT)?;
+        let mut overlay = new_overlay_state()?;
         let _ = overlay.take_damage();
         overlay.primary_tool = Tool::Pen(Color::RED);
         overlay.on_pointer_button_pressed(Point { x: 10.0, y: 30.0 }, InputButton::Primary)?;
@@ -687,7 +680,7 @@ mod tests {
 
     #[test]
     fn begin_stroke_draws_circle_at_point() -> Result<()> {
-        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT)?;
+        let mut overlay = new_overlay_state()?;
         let _ = overlay.take_damage();
         overlay.primary_tool = Tool::Pen(Color::GREEN);
 
@@ -706,7 +699,7 @@ mod tests {
 
     #[test]
     fn on_pointer_leave_clears_current_stroke() -> Result<()> {
-        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT)?;
+        let mut overlay = new_overlay_state()?;
         let _ = overlay.take_damage();
         overlay.on_pointer_button_pressed(Point { x: 10.0, y: 10.0 }, InputButton::Primary)?;
         assert!(overlay.current_stroke.is_some());
@@ -717,7 +710,7 @@ mod tests {
 
     #[test]
     fn end_stroke_clears_current_stroke() -> Result<()> {
-        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT)?;
+        let mut overlay = new_overlay_state()?;
         let _ = overlay.take_damage();
         overlay.on_pointer_button_pressed(Point { x: 10.0, y: 10.0 }, InputButton::Primary)?;
         assert!(overlay.current_stroke.is_some());
@@ -728,7 +721,7 @@ mod tests {
 
     #[test]
     fn on_size_changed_clears_canvas_and_returns_full_rect() -> Result<()> {
-        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT)?;
+        let mut overlay = new_overlay_state()?;
         let _ = overlay.take_damage();
         overlay.canvas.fill(Color::RED)?;
 
@@ -775,7 +768,7 @@ mod tests {
 
     #[test]
     fn on_key_pressed_u_undoes_last_stroke() -> Result<()> {
-        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT)?;
+        let mut overlay = new_overlay_state()?;
         let _ = overlay.take_damage();
         overlay.primary_tool = Tool::Pen(Color::RED);
         overlay.on_pointer_button_pressed(Point { x: 10.0, y: 10.0 }, InputButton::Primary)?;
@@ -794,7 +787,7 @@ mod tests {
 
     #[test]
     fn on_key_pressed_c_then_u_restores_drawing() -> Result<()> {
-        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT)?;
+        let mut overlay = new_overlay_state()?;
         let _ = overlay.take_damage();
         overlay.primary_tool = Tool::Pen(Color::RED);
         overlay.on_pointer_button_pressed(Point { x: 10.0, y: 10.0 }, InputButton::Primary)?;
@@ -820,7 +813,7 @@ mod tests {
 
     #[test]
     fn multiple_strokes_undo_in_order() -> Result<()> {
-        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT)?;
+        let mut overlay = new_overlay_state()?;
         let _ = overlay.take_damage();
 
         overlay.primary_tool = Tool::Pen(Color::RED);
@@ -851,7 +844,7 @@ mod tests {
 
     #[test]
     fn begin_stroke_starts_current_stroke() -> Result<()> {
-        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT)?;
+        let mut overlay = new_overlay_state()?;
         let _ = overlay.take_damage();
         overlay.primary_tool = Tool::Pen(Color::GREEN);
 
@@ -868,7 +861,7 @@ mod tests {
 
     #[test]
     fn on_pointer_motion_appends_to_current_stroke() -> Result<()> {
-        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT)?;
+        let mut overlay = new_overlay_state()?;
         let _ = overlay.take_damage();
         overlay.primary_tool = Tool::Pen(Color::RED);
 
@@ -886,7 +879,7 @@ mod tests {
 
     #[test]
     fn end_stroke_finalizes_stroke() -> Result<()> {
-        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT)?;
+        let mut overlay = new_overlay_state()?;
         let _ = overlay.take_damage();
         overlay.primary_tool = Tool::Pen(Color::RED);
 
@@ -901,7 +894,7 @@ mod tests {
 
     #[test]
     fn on_size_changed_clears_history() -> Result<()> {
-        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT)?;
+        let mut overlay = new_overlay_state()?;
         let _ = overlay.take_damage();
         overlay.primary_tool = Tool::Pen(Color::RED);
 
@@ -919,7 +912,7 @@ mod tests {
 
     #[test]
     fn on_key_pressed_period_fills_black_background() -> Result<()> {
-        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT)?;
+        let mut overlay = new_overlay_state()?;
         let _ = overlay.take_damage();
 
         overlay.on_key_pressed(Keysym::period)?;
@@ -933,7 +926,7 @@ mod tests {
 
     #[test]
     fn on_key_pressed_comma_fills_white_background() -> Result<()> {
-        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT)?;
+        let mut overlay = new_overlay_state()?;
         let _ = overlay.take_damage();
 
         overlay.on_key_pressed(Keysym::comma)?;
@@ -947,7 +940,7 @@ mod tests {
 
     #[test]
     fn fill_background_then_undo_restores_previous() -> Result<()> {
-        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT)?;
+        let mut overlay = new_overlay_state()?;
         let _ = overlay.take_damage();
         overlay.primary_tool = Tool::Pen(Color::RED);
 
@@ -971,7 +964,7 @@ mod tests {
 
     #[test]
     fn right_mouse_button_opens_context_menu() -> Result<()> {
-        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT)?;
+        let mut overlay = new_overlay_state()?;
         let _ = overlay.take_damage();
 
         overlay.on_pointer_button_pressed(Point { x: 10.0, y: 10.0 }, InputButton::Secondary)?;
@@ -1005,7 +998,7 @@ mod tests {
 
     #[test]
     fn menu_can_be_used_with_keyboard() -> Result<()> {
-        let mut overlay = OverlayState::new(TEST_WIDTH, TEST_HEIGHT)?;
+        let mut overlay = new_overlay_state()?;
         let _ = overlay.take_damage();
 
         // Open the menu with space.

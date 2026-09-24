@@ -4,7 +4,7 @@ use cairo::{
 use smithay_client_toolkit::seat::keyboard::Keysym;
 
 use crate::{
-    actions::{ANY_MENU_ACCELS, Action, FocusDirection, NO_MENU_ACCELS},
+    actions::{Action, FocusDirection, Keybindings},
     canvas::{Color, Point, Rectangle},
     waydoodle::{InputButton, Result, Tool},
 };
@@ -52,7 +52,7 @@ impl MenuButton {
     }
 }
 
-fn build_menu() -> Vec<MenuComponent> {
+fn build_menu(keybindings: &Keybindings) -> Vec<MenuComponent> {
     let mut next_id = {
         let mut id = 0usize;
         move || {
@@ -63,35 +63,46 @@ fn build_menu() -> Vec<MenuComponent> {
     };
 
     vec![
-        MenuComponent::ToolSelector(build_pen_tool_selector(&mut next_id)),
-        MenuComponent::ToolSelector(build_eraser_tool_selector(&mut next_id)),
-        MenuComponent::ToolSelector(build_background_tool_selector(&mut next_id)),
+        MenuComponent::ToolSelector(build_pen_tool_selector(&mut next_id, keybindings)),
+        MenuComponent::ToolSelector(build_eraser_tool_selector(&mut next_id, keybindings)),
+        MenuComponent::ToolSelector(build_background_tool_selector(&mut next_id, keybindings)),
         MenuComponent::Item(build_row_menu_item(
             &mut next_id,
+            keybindings,
             "Clear screen",
             Action::Clear,
         )),
-        MenuComponent::Item(build_row_menu_item(&mut next_id, "Undo", Action::Undo)),
         MenuComponent::Item(build_row_menu_item(
             &mut next_id,
+            keybindings,
+            "Undo",
+            Action::Undo,
+        )),
+        MenuComponent::Item(build_row_menu_item(
+            &mut next_id,
+            keybindings,
             "Hide overlay",
             Action::HideOverlay,
         )),
     ]
 }
 
-fn build_pen_tool_selector(next_id: &mut impl FnMut() -> usize) -> ToolSelector {
+fn build_pen_tool_selector(
+    next_id: &mut impl FnMut() -> usize,
+    keybindings: &Keybindings,
+) -> ToolSelector {
     build_tool_selector(
         "Pen",
         next_id,
-        ANY_MENU_ACCELS
+        keybindings
+            .always()
             .iter()
-            .filter_map(|(keysym, action)| match action {
+            .filter_map(|&(keysym, action)| match action {
                 Action::SetTool(Tool::Pen(color)) => Some((
-                    *keysym,
-                    *action,
-                    *color,
-                    Box::new(|s: &State| s.primary_tool == Tool::Pen(*color))
+                    Some(keysym),
+                    action,
+                    color,
+                    Box::new(move |s: &State| s.primary_tool == Tool::Pen(color))
                         as Box<dyn Fn(&State) -> bool>,
                 )),
                 _ => None,
@@ -99,31 +110,39 @@ fn build_pen_tool_selector(next_id: &mut impl FnMut() -> usize) -> ToolSelector 
     )
 }
 
-fn build_eraser_tool_selector(next_id: &mut impl FnMut() -> usize) -> ToolSelector {
+fn build_eraser_tool_selector(
+    next_id: &mut impl FnMut() -> usize,
+    keybindings: &Keybindings,
+) -> ToolSelector {
+    let action = Action::SetTool(Tool::Eraser);
     build_tool_selector(
         "Eraser",
         next_id,
         [(
-            Keysym::e,
-            Action::SetTool(Tool::Eraser),
+            keybindings.key(action),
+            action,
             Color::TRANSPARENT,
             Box::new(|s: &State| s.primary_tool == Tool::Eraser) as Box<dyn Fn(&State) -> bool>,
         )],
     )
 }
 
-fn build_background_tool_selector(next_id: &mut impl FnMut() -> usize) -> ToolSelector {
+fn build_background_tool_selector(
+    next_id: &mut impl FnMut() -> usize,
+    keybindings: &Keybindings,
+) -> ToolSelector {
     build_tool_selector(
         "Background",
         next_id,
-        ANY_MENU_ACCELS
+        keybindings
+            .always()
             .iter()
-            .filter_map(|(keysym, action)| match action {
+            .filter_map(|&(keysym, action)| match action {
                 Action::SetBackground(color) => Some((
-                    *keysym,
-                    *action,
-                    *color,
-                    Box::new(|s: &State| s.background_color == *color)
+                    Some(keysym),
+                    action,
+                    color,
+                    Box::new(move |s: &State| s.background_color == color)
                         as Box<dyn Fn(&State) -> bool>,
                 )),
                 _ => None,
@@ -134,7 +153,7 @@ fn build_background_tool_selector(next_id: &mut impl FnMut() -> usize) -> ToolSe
 fn build_tool_selector(
     name: &'static str,
     next_id: &mut impl FnMut() -> usize,
-    items: impl IntoIterator<Item = (Keysym, Action, Color, Box<dyn Fn(&State) -> bool>)>,
+    items: impl IntoIterator<Item = (Option<Keysym>, Action, Color, Box<dyn Fn(&State) -> bool>)>,
 ) -> ToolSelector {
     ToolSelector {
         name,
@@ -145,7 +164,7 @@ fn build_tool_selector(
                 btn: MenuButton {
                     id: next_id(),
                     action,
-                    accel: accel_label(keysym),
+                    accel: keysym.map_or("", accel_label),
                     rect: Rectangle::new(0, 0, 0, 0),
                 },
                 selected,
@@ -157,20 +176,11 @@ fn build_tool_selector(
 
 fn build_row_menu_item(
     next_id: &mut impl FnMut() -> usize,
+    keybindings: &Keybindings,
     label: &'static str,
     action: Action,
 ) -> RowMenuItem {
-    let accel = ANY_MENU_ACCELS
-        .iter()
-        .chain(NO_MENU_ACCELS.iter())
-        .find_map(|(keysym, a)| {
-            if *a == action {
-                Some(accel_label(*keysym))
-            } else {
-                None
-            }
-        })
-        .unwrap_or("");
+    let accel = keybindings.key(action).map_or("", accel_label);
     RowMenuItem {
         label,
         btn: MenuButton {
@@ -427,11 +437,16 @@ pub struct ContextMenu {
 }
 
 impl ContextMenu {
-    pub fn new(pos: Point, screen_width: i32, screen_height: i32) -> Result<Self> {
+    pub fn new(
+        pos: Point,
+        screen_width: i32,
+        screen_height: i32,
+        keybindings: &Keybindings,
+    ) -> Result<Self> {
         let dummy = UI::dummy_surface()?;
         let ctx = UI::make_ctx(&dummy)?;
 
-        let mut menu = build_menu();
+        let mut menu = build_menu(keybindings);
 
         // First pass: compute the menu size
         let mut menu_w = 0;
@@ -589,6 +604,7 @@ impl UI {
     pub fn on_button_pressed(
         &mut self,
         state: &State,
+        keybindings: &Keybindings,
         pos: Point,
         btn: InputButton,
     ) -> Result<(Option<Action>, bool)> {
@@ -599,6 +615,7 @@ impl UI {
                     pos,
                     self.surface.width(),
                     self.surface.height(),
+                    keybindings,
                 )?);
                 self.render(state)?;
                 return Ok((None, true));
@@ -666,13 +683,14 @@ impl UI {
         Ok(())
     }
 
-    pub fn open_context_menu(&mut self, state: &State) -> Result<()> {
+    pub fn open_context_menu(&mut self, state: &State, keybindings: &Keybindings) -> Result<()> {
         if self.context_menu.is_none() {
             let pos = self.last_pointer_pos.unwrap_or(Point { x: 0.0, y: 0.0 });
             self.context_menu = Some(ContextMenu::new(
                 pos,
                 self.surface.width(),
                 self.surface.height(),
+                keybindings,
             )?);
             self.render(state)?;
         }

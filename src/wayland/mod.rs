@@ -28,7 +28,7 @@ use wayland_protocols::wp::{
 };
 
 use crate::{
-    actions::GlobalAccels,
+    actions::{GlobalAccels, Keybindings},
     pad::Pads,
     tray::WaydoodleTray,
     waydoodle::CursorShape,
@@ -107,6 +107,7 @@ pub(crate) struct App {
     pointers: Vec<PointerState>,
     tablets: Vec<TabletState>,
     tablet_manager: Option<zwp_tablet_manager_v2::ZwpTabletManagerV2>,
+    keybindings: Keybindings,
     global_accels: GlobalAccels,
     pads: Pads,
     tray_handle: Option<Handle<WaydoodleTray>>,
