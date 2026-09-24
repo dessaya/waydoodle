@@ -3,18 +3,21 @@
 //! A missing or broken configuration is never fatal: it is reported and the
 //! defaults are used instead.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
+use smithay_client_toolkit::seat::keyboard::Keysym;
+use xkbcommon::xkb;
 
-use crate::actions::{GlobalAccels, GlobalAction, GlobalTrigger};
+use crate::actions::{Action, GlobalAccels, GlobalAction, GlobalTrigger, KeyMode, Keybindings};
 use crate::notify::warn_user;
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub(crate) struct Config {
     pub pad: PadConfig,
+    pub keys: KeysConfig,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -51,6 +54,57 @@ impl PadConfig {
         }
         accels
     }
+}
+
+/// Keyboard bindings by key name, added to the defaults or overriding them.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub(crate) struct KeysConfig {
+    always: BTreeMap<String, String>,
+    menu_closed: BTreeMap<String, String>,
+    menu_open: BTreeMap<String, String>,
+}
+
+impl KeysConfig {
+    /// The default bindings with the configured ones applied, ignoring (and
+    /// reporting) unknown key and action names.
+    pub fn keybindings(&self) -> Keybindings {
+        let mut keybindings = Keybindings::default();
+        let modes = [
+            (KeyMode::Always, &self.always),
+            (KeyMode::MenuClosed, &self.menu_closed),
+            (KeyMode::MenuOpen, &self.menu_open),
+        ];
+        for (mode, keys) in modes {
+            for (key, name) in keys {
+                let Some(keysym) = parse_key(key) else {
+                    warn_user!("Ignoring unknown key '{key}'");
+                    continue;
+                };
+                if name == NONE {
+                    keybindings.unbind(mode, keysym);
+                    continue;
+                }
+                match Action::from_name(name) {
+                    Some(action) => keybindings.bind(mode, keysym, action),
+                    None => warn_user!("Ignoring unknown action '{name}' bound to key '{key}'"),
+                }
+            }
+        }
+        keybindings
+    }
+}
+
+/// Parses an xkb keysym name such as `space` or `Escape`, ignoring case, or a
+/// single character such as `.`.
+fn parse_key(name: &str) -> Option<Keysym> {
+    let mut chars = name.chars();
+    if let (Some(c), None) = (chars.next(), chars.next()) {
+        // Letters are bound without Shift, like the default bindings.
+        return Some(Keysym::from_char(c.to_ascii_lowercase()));
+    }
+    let keysym = xkb::keysym_from_name(name, xkb::KEYSYM_CASE_INSENSITIVE);
+    (keysym != Keysym::NoSymbol).then_some(keysym)
 }
 
 /// Reads the configuration file, falling back to the defaults if it is missing
@@ -171,6 +225,57 @@ mod tests {
             accels.get(GlobalTrigger::PadButton(1)),
             Some(GlobalAction::Overlay(Action::Undo))
         );
+    }
+
+    fn keys(contents: &str) -> Keybindings {
+        parse(contents).keys.keybindings()
+    }
+
+    #[test]
+    fn configured_keys_override_the_defaults() {
+        let keys = keys("[keys.always]\nx = \"pen-red\"\nu = \"clear\"\n");
+        let red = Some(Action::SetTool(Tool::Pen(Color::RED)));
+        assert_eq!(keys.action(Keysym::x, false), red);
+        assert_eq!(keys.action(Keysym::u, false), Some(Action::Clear));
+        // Not configured, so the default is kept.
+        assert_eq!(keys.action(Keysym::r, false), red);
+    }
+
+    #[test]
+    fn none_removes_a_default_key() {
+        let keys = keys("[keys.always]\nr = \"none\"\n");
+        assert_eq!(keys.action(Keysym::r, false), None);
+        assert_eq!(
+            keys.action(Keysym::g, false),
+            Some(Action::SetTool(Tool::Pen(Color::GREEN)))
+        );
+    }
+
+    #[test]
+    fn keys_are_configured_per_mode() {
+        let keys = keys("[keys.menu_open]\nq = \"menu-close\"\n");
+        assert_eq!(keys.action(Keysym::q, true), Some(Action::CloseContextMenu));
+        assert_eq!(keys.action(Keysym::q, false), None);
+    }
+
+    #[test]
+    fn key_names_are_xkb_names_or_characters() {
+        let keys = keys("[keys.always]\nESCAPE = \"undo\"\n\".\" = \"clear\"\nR = \"eraser\"\n");
+        // Case is ignored.
+        assert_eq!(keys.action(Keysym::Escape, false), Some(Action::Undo));
+        assert_eq!(keys.action(Keysym::period, false), Some(Action::Clear));
+        // Letters are bound without Shift.
+        assert_eq!(
+            keys.action(Keysym::r, false),
+            Some(Action::SetTool(Tool::Eraser))
+        );
+    }
+
+    #[test]
+    fn unknown_keys_are_skipped() {
+        let keys = keys("[keys.always]\nnonsense = \"undo\"\nx = \"clear\"\n");
+        assert_eq!(keys.action(Keysym::x, false), Some(Action::Clear));
+        assert_eq!(keys.action(Keysym::u, false), Some(Action::Undo));
     }
 
     #[test]

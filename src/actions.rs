@@ -47,7 +47,9 @@ impl fmt::Display for Action {
             Self::Focus(FocusDirection::Down) => f.write_str("menu-down"),
             Self::Focus(FocusDirection::Left) => f.write_str("menu-left"),
             Self::Focus(FocusDirection::Right) => f.write_str("menu-right"),
-            Self::HideOverlay => f.write_str("hide-overlay"),
+            // Named like GlobalAction::CloseOverlay, which does the same when
+            // the overlay is focused.
+            Self::HideOverlay => f.write_str("close-overlay"),
         }
     }
 }
@@ -71,7 +73,7 @@ impl Action {
             "menu-down" => Self::Focus(FocusDirection::Down),
             "menu-left" => Self::Focus(FocusDirection::Left),
             "menu-right" => Self::Focus(FocusDirection::Right),
-            "hide-overlay" => Self::HideOverlay,
+            "close-overlay" => Self::HideOverlay,
             _ => return None,
         })
     }
@@ -140,6 +142,35 @@ impl Keybindings {
     pub(crate) fn always(&self) -> &[(Keysym, Action)] {
         &self.always
     }
+
+    /// Binds `keysym` to `action`, replacing its binding in the same mode.
+    pub(crate) fn bind(&mut self, mode: KeyMode, keysym: Keysym, action: Action) {
+        let table = self.table(mode);
+        match table.iter_mut().find(|(key, _)| *key == keysym) {
+            Some(binding) => binding.1 = action,
+            None => table.push((keysym, action)),
+        }
+    }
+
+    pub(crate) fn unbind(&mut self, mode: KeyMode, keysym: Keysym) {
+        self.table(mode).retain(|(key, _)| *key != keysym);
+    }
+
+    fn table(&mut self, mode: KeyMode) -> &mut Vec<(Keysym, Action)> {
+        match mode {
+            KeyMode::Always => &mut self.always,
+            KeyMode::MenuClosed => &mut self.menu_closed,
+            KeyMode::MenuOpen => &mut self.menu_open,
+        }
+    }
+}
+
+/// When a keybinding is active.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum KeyMode {
+    Always,
+    MenuClosed,
+    MenuOpen,
 }
 
 impl Default for Keybindings {
@@ -302,8 +333,30 @@ mod tests {
     }
 
     #[test]
+    fn close_overlay_works_with_or_without_an_overlay() {
+        // On a pad button, it must also work when there is no overlay.
+        assert_eq!(
+            GlobalAction::from_name("close-overlay"),
+            Some(GlobalAction::CloseOverlay)
+        );
+        // On a key, the overlay is always there.
+        assert_eq!(
+            Action::from_name("close-overlay"),
+            Some(Action::HideOverlay)
+        );
+    }
+
+    #[test]
     fn unknown_names_are_rejected() {
-        for name in ["", "pen", "pen-", "pen-chartreuse", "toggle", "menu"] {
+        for name in [
+            "",
+            "pen",
+            "pen-",
+            "pen-chartreuse",
+            "toggle",
+            "menu",
+            "hide-overlay",
+        ] {
             assert_eq!(GlobalAction::from_name(name), None, "{name}");
         }
     }

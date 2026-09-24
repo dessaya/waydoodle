@@ -2,6 +2,7 @@ use cairo::{
     BorrowError, Context, FontFace, FontSlant, FontWeight, Format, ImageSurface, ImageSurfaceData,
 };
 use smithay_client_toolkit::seat::keyboard::Keysym;
+use xkbcommon::xkb;
 
 use crate::{
     actions::{Action, FocusDirection, Keybindings},
@@ -35,7 +36,7 @@ struct MenuButton {
     pub id: usize,
     pub action: Action,
     pub rect: Rectangle,
-    pub accel: &'static str,
+    pub accel: String,
 }
 
 impl MenuButton {
@@ -164,7 +165,7 @@ fn build_tool_selector(
                 btn: MenuButton {
                     id: next_id(),
                     action,
-                    accel: keysym.map_or("", accel_label),
+                    accel: keysym.map(accel_label).unwrap_or_default(),
                     rect: Rectangle::new(0, 0, 0, 0),
                 },
                 selected,
@@ -180,7 +181,7 @@ fn build_row_menu_item(
     label: &'static str,
     action: Action,
 ) -> RowMenuItem {
-    let accel = keybindings.key(action).map_or("", accel_label);
+    let accel = keybindings.key(action).map(accel_label).unwrap_or_default();
     RowMenuItem {
         label,
         btn: MenuButton {
@@ -192,23 +193,15 @@ fn build_row_menu_item(
     }
 }
 
-fn accel_label(keysym: Keysym) -> &'static str {
+fn accel_label(keysym: Keysym) -> String {
     match keysym {
-        Keysym::space => "Space",
-        Keysym::Escape => "Esc",
-        Keysym::r => "R",
-        Keysym::g => "G",
-        Keysym::b => "B",
-        Keysym::y => "Y",
-        Keysym::m => "M",
-        Keysym::n => "N",
-        Keysym::e => "E",
-        Keysym::period => ".",
-        Keysym::comma => ",",
-        Keysym::slash => "/",
-        Keysym::c => "C",
-        Keysym::u => "U",
-        _ => keysym.name().unwrap_or("?"),
+        Keysym::space => "Space".to_string(),
+        Keysym::Escape => "Esc".to_string(),
+        _ => match keysym.key_char() {
+            // Shown in upper case, as printed on the keys.
+            Some(c) if !c.is_control() => c.to_uppercase().to_string(),
+            _ => xkb::keysym_get_name(keysym),
+        },
     }
 }
 
@@ -238,7 +231,7 @@ impl MenuComponent {
             }
             MenuComponent::Item(item) => {
                 let desc_w = ctx.text_extents(item.label)?.x_advance().ceil() as i32;
-                let accel_w = ctx.text_extents(item.btn.accel)?.x_advance().ceil() as i32;
+                let accel_w = ctx.text_extents(&item.btn.accel)?.x_advance().ceil() as i32;
                 Ok((
                     Self::PADDING_X
                         + Self::SWATCH_SIZE
@@ -362,17 +355,17 @@ impl MenuComponent {
                     } else {
                         (0.1, 0.1, 0.1)
                     };
-                    let extents = ctx.text_extents(item.btn.accel)?;
+                    let extents = ctx.text_extents(&item.btn.accel)?;
                     let text_x = swatch_x + (Self::SWATCH_SIZE as f64 - extents.x_advance()) / 2.0;
                     if color.a == 0 {
                         // 1px shadow for readability
                         ctx.set_source_rgb(1.0, 1.0, 1.0);
                         ctx.move_to(text_x + 1.0, baseline_y + 1.0);
-                        ctx.show_text(item.btn.accel)?;
+                        ctx.show_text(&item.btn.accel)?;
                     }
                     ctx.set_source_rgb(fg.0, fg.1, fg.2);
                     ctx.move_to(text_x, baseline_y);
-                    ctx.show_text(item.btn.accel)?;
+                    ctx.show_text(&item.btn.accel)?;
                 }
             }
             MenuComponent::Item(item) => {
@@ -396,14 +389,14 @@ impl MenuComponent {
 
                 // Accel label, right-aligned.
                 ctx.set_source_rgb(0.7, 0.7, 0.7);
-                let accel_adv = ctx.text_extents(item.btn.accel)?.x_advance();
+                let accel_adv = ctx.text_extents(&item.btn.accel)?.x_advance();
                 ctx.move_to(
                     item.btn.rect.x as f64 + item.btn.rect.width as f64
                         - Self::PADDING_X as f64
                         - accel_adv,
                     baseline_y,
                 );
-                ctx.show_text(item.btn.accel)?;
+                ctx.show_text(&item.btn.accel)?;
             }
         }
         Ok(())
@@ -782,5 +775,42 @@ impl UI {
         self.context_menu
             .as_ref()
             .and_then(|menu| menu.selected_action())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_keys_keep_their_labels() {
+        let labels = [
+            (Keysym::r, "R"),
+            (Keysym::g, "G"),
+            (Keysym::b, "B"),
+            (Keysym::y, "Y"),
+            (Keysym::m, "M"),
+            (Keysym::n, "N"),
+            (Keysym::e, "E"),
+            (Keysym::c, "C"),
+            (Keysym::u, "U"),
+            (Keysym::period, "."),
+            (Keysym::comma, ","),
+            (Keysym::slash, "/"),
+            (Keysym::space, "Space"),
+            (Keysym::Escape, "Esc"),
+        ];
+        for (keysym, label) in labels {
+            assert_eq!(accel_label(keysym), label);
+        }
+    }
+
+    #[test]
+    fn other_keys_get_readable_labels() {
+        assert_eq!(accel_label(Keysym::x), "X");
+        assert_eq!(accel_label(Keysym::_1), "1");
+        assert_eq!(accel_label(Keysym::Return), "Return");
+        assert_eq!(accel_label(Keysym::F1), "F1");
+        assert_eq!(accel_label(Keysym::Up), "Up");
     }
 }

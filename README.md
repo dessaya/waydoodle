@@ -141,15 +141,31 @@ enabled = true
 [pad.buttons]
 5 = "undo"
 1 = "none"
+
+# Keyboard shortcuts, added to the defaults or overriding them. "none"
+# removes a default shortcut.
+[keys.always]
+x = "pen-red"
+r = "none"
 ```
 
-The available actions are:
+Keyboard shortcuts go in one of three sections: `keys.always`,
+`keys.menu_closed` (only while the context menu is closed) and `keys.menu_open`
+(only while it is open). A key is an xkb key name such as `space`, `Escape` or
+`Return`, ignoring case, or a single character such as `"."`. The key names are
+listed in
+[xkbcommon-keysyms.h](https://github.com/xkbcommon/libxkbcommon/blob/master/include/xkbcommon/xkbcommon-keysyms.h),
+without the `XKB_KEY_` prefix. To find the name of a key, press it while
+running `wev`.
+
+The available actions are listed below. `toggle-overlay` can only be bound to
+pad buttons: the keyboard only reaches Waydoodle while the overlay is focused,
+so a key could turn drawing mode off but never back on.
 
 | Action | Meaning |
 |--------|---------|
 | `toggle-overlay` | Show the overlay, or toggle drawing mode if it is already up |
 | `close-overlay` | Close the overlay, discarding the drawing |
-| `hide-overlay` | Same, but only when an overlay exists |
 | `pen-<color>` | Draw with a pen of that color |
 | `background-<color>` | Fill the background with that color |
 | `eraser` | Switch to the eraser |

@@ -19,7 +19,7 @@ use wayland_protocols::wp::tablet::zv2::client::zwp_tablet_manager_v2;
 use super::{WaylandState, cursors::Cursors};
 use crate::{
     Options,
-    actions::{GlobalAction, GlobalTrigger, Keybindings},
+    actions::{GlobalAction, GlobalTrigger},
     config,
     pad::{self, PadHost, Pads},
     tray::{TrayEvent, WaydoodleTray},
@@ -103,7 +103,7 @@ impl App {
             pointers: Vec::new(),
             tablets: Vec::new(),
             tablet_manager,
-            keybindings: Keybindings::default(),
+            keybindings: config.keys.keybindings(),
             global_accels: config.pad.accels(),
             pads: Pads::default(),
             cursors,
