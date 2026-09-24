@@ -136,6 +136,7 @@ impl OverlayState {
             }
             Action::Undo => {
                 if self.history.pop().is_some() {
+                    self.background_color = self.history_background();
                     self.canvas.clear()?;
                     self.replay_history()?;
                 }
@@ -163,6 +164,18 @@ impl OverlayState {
         };
         self.mark_dirty(self.canvas.rect());
         Ok(())
+    }
+
+    /// The background color at the end of the history.
+    fn history_background(&self) -> Color {
+        self.history
+            .iter()
+            .rev()
+            .find_map(|item| match item {
+                HistoryItem::Clear(color) => Some(*color),
+                HistoryItem::Stroke(_) => None,
+            })
+            .unwrap_or(Color::TRANSPARENT)
     }
 
     fn replay_history(&mut self) -> Result<()> {
@@ -390,6 +403,7 @@ impl OverlayState {
     pub fn resize(&mut self, width: i32, height: i32) -> Result<()> {
         self.canvas = Canvas::new(width, height)?;
         self.history.clear();
+        self.background_color = self.history_background();
         self.damage = vec![self.canvas.rect()];
         Ok(())
     }
@@ -900,6 +914,29 @@ mod tests {
 
         assert!(overlay.current_stroke.is_none());
         assert_eq!(overlay.history.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn undoing_a_background_change_restores_the_background_color() -> Result<()> {
+        let mut overlay = new_overlay_state()?;
+        overlay.on_key_pressed(Keysym::period)?;
+        assert_eq!(overlay.background_color, Color::BLACK);
+
+        overlay.on_key_pressed(Keysym::u)?;
+        assert_eq!(overlay.background_color, Color::TRANSPARENT);
+        assert_all_pixels_color(&mut overlay.canvas, Color::TRANSPARENT);
+        Ok(())
+    }
+
+    #[test]
+    fn resizing_resets_the_background_color() -> Result<()> {
+        let mut overlay = new_overlay_state()?;
+        overlay.on_key_pressed(Keysym::period)?;
+
+        overlay.resize(TEST_WIDTH, TEST_HEIGHT)?;
+        assert_eq!(overlay.background_color, Color::TRANSPARENT);
+        assert_all_pixels_color(&mut overlay.canvas, Color::TRANSPARENT);
         Ok(())
     }
 
