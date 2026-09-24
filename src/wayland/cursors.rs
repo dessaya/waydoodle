@@ -76,7 +76,7 @@ struct CursorSurface {
 
 impl CursorSurface {
     fn eraser(compositor: &CompositorState, shm: &Shm, qh: &QueueHandle<App>) -> Self {
-        let eraser_radius = Tool::Eraser.brush_radius();
+        let eraser_radius = Tool::ERASER_RADIUS;
         let side = (eraser_radius as i32) * 2 + 1;
         Self::from_rgba(
             include_bytes!("../../assets/eraser_cursor.rgba"),

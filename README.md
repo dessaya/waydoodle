@@ -152,6 +152,12 @@ r = "none"
 [menu]
 pens = ["red", "green", "blue", "#ff8800"]
 backgrounds = ["black", "transparent"]
+
+# How drawing starts out. The pen radius is in pixels.
+[drawing]
+pen = "red"
+background = "transparent"
+pen_radius = 1.5
 ```
 
 Keyboard shortcuts go in one of three sections: `keys.always`,

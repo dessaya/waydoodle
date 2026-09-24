@@ -189,13 +189,6 @@ impl Canvas {
         ctx.set_operator(cairo::Operator::Source);
     }
 
-    pub fn clear(&mut self) -> Result<Rectangle> {
-        let ctx = Context::new(&self.surface)?;
-        Self::set_source_rgba(&ctx, Color::TRANSPARENT);
-        ctx.paint()?;
-        Ok(Rectangle::new(0, 0, self.width(), self.height()))
-    }
-
     pub fn fill(&mut self, color: Color) -> Result<Rectangle> {
         let ctx = Context::new(&self.surface)?;
         Self::set_source_rgba(&ctx, color);
@@ -297,14 +290,14 @@ mod tests {
     // -------------------------------------------------------
 
     #[test]
-    fn clear_fills_buffer_with_zeros_and_returns_full_rect() -> Result<()> {
+    fn filling_with_transparent_clears_the_canvas() -> Result<()> {
         let w = 10;
         let h = 8;
         let mut canvas = Canvas::new(w, h)?;
 
         canvas.fill(Color::RED)?;
 
-        let damage = canvas.clear()?;
+        let damage = canvas.fill(Color::TRANSPARENT)?;
         assert_eq!(damage, Rectangle::new(0, 0, w, h));
 
         for y in 0..h {

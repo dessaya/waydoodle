@@ -21,19 +21,9 @@ pub(crate) enum Tool {
     Eraser,
 }
 
-impl Default for Tool {
-    fn default() -> Self {
-        Tool::Pen(Color::RED)
-    }
-}
-
 impl Tool {
-    pub(crate) fn brush_radius(self) -> f64 {
-        match self {
-            Tool::Pen(_) => 1.5,
-            Tool::Eraser => 10.0,
-        }
-    }
+    /// Fixed, because the eraser cursor image is drawn for this size.
+    pub(crate) const ERASER_RADIUS: f64 = 10.0;
 
     pub(crate) fn pixel_color(self, background_color: Color) -> Color {
         match self {
@@ -70,10 +60,27 @@ pub(crate) enum HistoryItem {
 }
 
 /// The parts of an overlay that come from the configuration.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub(crate) struct OverlaySettings {
     pub keybindings: Keybindings,
     pub palette: Palette,
+    /// The pen color to start with.
+    pub pen: Color,
+    /// The background color to start with, and to go back to on undo.
+    pub background: Color,
+    pub pen_radius: f64,
+}
+
+impl Default for OverlaySettings {
+    fn default() -> Self {
+        Self {
+            keybindings: Keybindings::default(),
+            palette: Palette::default(),
+            pen: Color::RED,
+            background: Color::TRANSPARENT,
+            pen_radius: 1.5,
+        }
+    }
 }
 
 pub(crate) struct OverlayState {
@@ -86,6 +93,8 @@ pub(crate) struct OverlayState {
     pub ui: UI,
     pub keep_open: bool,
     keybindings: Keybindings,
+    base_background: Color,
+    pen_radius: f64,
     damage: Vec<Rectangle>,
 }
 
@@ -94,19 +103,24 @@ impl OverlayState {
         let OverlaySettings {
             keybindings,
             palette,
+            pen,
+            background,
+            pen_radius,
         } = settings;
-        let canvas = Canvas::new(width, height)?;
-        let rect = canvas.rect();
+        let mut canvas = Canvas::new(width, height)?;
+        let rect = canvas.fill(background)?;
         Ok(Self {
             canvas,
             current_stroke: None,
-            background_color: Color::TRANSPARENT,
-            primary_tool: Tool::default(),
+            background_color: background,
+            primary_tool: Tool::Pen(pen),
             override_tool: None,
             history: Vec::new(),
             ui: UI::new(width, height, palette)?,
             keep_open: true,
             keybindings,
+            base_background: background,
+            pen_radius,
             damage: vec![rect],
         })
     }
@@ -137,7 +151,7 @@ impl OverlayState {
             Action::Undo => {
                 if self.history.pop().is_some() {
                     self.background_color = self.history_background();
-                    self.canvas.clear()?;
+                    self.canvas.fill(self.base_background)?;
                     self.replay_history()?;
                 }
                 self.ui.close_context_menu(&self.ui_state())?;
@@ -175,7 +189,7 @@ impl OverlayState {
                 HistoryItem::Clear(color) => Some(*color),
                 HistoryItem::Stroke(_) => None,
             })
-            .unwrap_or(Color::TRANSPARENT)
+            .unwrap_or(self.base_background)
     }
 
     fn replay_history(&mut self) -> Result<()> {
@@ -381,7 +395,10 @@ impl OverlayState {
 
     fn begin_stroke(&mut self, pos: Point) -> Result<()> {
         let tool = self.current_tool();
-        let brush_radius = tool.brush_radius();
+        let brush_radius = match tool {
+            Tool::Pen(_) => self.pen_radius,
+            Tool::Eraser => Tool::ERASER_RADIUS,
+        };
         let color = tool.pixel_color(self.background_color);
         self.current_stroke = Some(Stroke {
             color,
@@ -402,6 +419,7 @@ impl OverlayState {
 
     pub fn resize(&mut self, width: i32, height: i32) -> Result<()> {
         self.canvas = Canvas::new(width, height)?;
+        self.canvas.fill(self.base_background)?;
         self.history.clear();
         self.background_color = self.history_background();
         self.damage = vec![self.canvas.rect()];
@@ -498,16 +516,6 @@ mod tests {
     }
 
     #[test]
-    fn pen_brush_radius_is_1_5() {
-        assert_eq!(Tool::Pen(Color::RED).brush_radius(), 1.5);
-    }
-
-    #[test]
-    fn eraser_brush_radius_is_10() {
-        assert_eq!(Tool::Eraser.brush_radius(), 10.0);
-    }
-
-    #[test]
     fn pen_cursor_shape_is_crosshair() {
         assert_eq!(Tool::Pen(Color::RED).cursor_shape(), CursorShape::Crosshair);
     }
@@ -536,8 +544,9 @@ mod tests {
     }
 
     #[test]
-    fn default_tool_is_red_pen() {
-        assert_eq!(Tool::default(), Tool::Pen(Color::RED));
+    fn default_tool_is_red_pen() -> Result<()> {
+        assert_eq!(new_overlay_state()?.primary_tool, Tool::Pen(Color::RED));
+        Ok(())
     }
 
     #[test]
@@ -914,6 +923,76 @@ mod tests {
 
         assert!(overlay.current_stroke.is_none());
         assert_eq!(overlay.history.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn pen_and_eraser_radii() -> Result<()> {
+        let mut overlay = OverlayState::new(
+            TEST_WIDTH,
+            TEST_HEIGHT,
+            OverlaySettings {
+                pen_radius: 4.0,
+                ..OverlaySettings::default()
+            },
+        )?;
+        let pos = Point { x: 32.0, y: 32.0 };
+        overlay.on_pointer_button_pressed(pos, InputButton::Primary)?;
+        assert_eq!(overlay.current_stroke.as_ref().unwrap().brush_radius, 4.0);
+        overlay.on_pointer_button_released(pos, InputButton::Primary)?;
+
+        overlay.primary_tool = Tool::Eraser;
+        overlay.on_pointer_button_pressed(pos, InputButton::Primary)?;
+        assert_eq!(overlay.current_stroke.as_ref().unwrap().brush_radius, 10.0);
+        Ok(())
+    }
+
+    #[test]
+    fn default_pen_radius_is_1_5() -> Result<()> {
+        let mut overlay = new_overlay_state()?;
+        overlay.on_pointer_button_pressed(Point { x: 32.0, y: 32.0 }, InputButton::Primary)?;
+        assert_eq!(overlay.current_stroke.as_ref().unwrap().brush_radius, 1.5);
+        Ok(())
+    }
+
+    #[test]
+    fn drawing_starts_with_the_configured_pen_and_background() -> Result<()> {
+        let mut overlay = OverlayState::new(
+            TEST_WIDTH,
+            TEST_HEIGHT,
+            OverlaySettings {
+                pen: Color::BLUE,
+                background: Color::BLACK,
+                ..OverlaySettings::default()
+            },
+        )?;
+        assert_eq!(overlay.primary_tool, Tool::Pen(Color::BLUE));
+        assert_eq!(overlay.background_color, Color::BLACK);
+        assert_all_pixels_color(&mut overlay.canvas, Color::BLACK);
+        Ok(())
+    }
+
+    #[test]
+    fn undo_and_resize_go_back_to_the_starting_background() -> Result<()> {
+        let mut overlay = OverlayState::new(
+            TEST_WIDTH,
+            TEST_HEIGHT,
+            OverlaySettings {
+                background: Color::BLACK,
+                ..OverlaySettings::default()
+            },
+        )?;
+        overlay.on_key_pressed(Keysym::comma)?;
+        assert_eq!(overlay.background_color, Color::WHITE);
+
+        overlay.on_key_pressed(Keysym::u)?;
+        assert_eq!(overlay.background_color, Color::BLACK);
+        assert_all_pixels_color(&mut overlay.canvas, Color::BLACK);
+
+        overlay.on_key_pressed(Keysym::comma)?;
+        overlay.resize(TEST_WIDTH, TEST_HEIGHT)?;
+        assert_eq!(overlay.background_color, Color::BLACK);
+        assert_all_pixels_color(&mut overlay.canvas, Color::BLACK);
         Ok(())
     }
 

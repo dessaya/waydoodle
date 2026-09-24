@@ -23,7 +23,7 @@ use crate::{
     config,
     pad::{self, PadHost, Pads},
     tray::{TrayEvent, WaydoodleTray},
-    waydoodle::{OverlayController, OverlaySettings},
+    waydoodle::OverlayController,
     wayland::{App, Overlay, OverlaySlot},
 };
 
@@ -103,10 +103,7 @@ impl App {
             pointers: Vec::new(),
             tablets: Vec::new(),
             tablet_manager,
-            overlay_settings: OverlaySettings {
-                keybindings: config.keys.keybindings(),
-                palette: config.menu.palette(),
-            },
+            overlay_settings: config.overlay_settings(),
             global_accels: config.pad.accels(),
             pads: Pads::default(),
             cursors,

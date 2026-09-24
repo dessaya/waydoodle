@@ -14,6 +14,7 @@ use crate::actions::{Action, GlobalAccels, GlobalAction, GlobalTrigger, KeyMode,
 use crate::canvas::Color;
 use crate::notify::warn_user;
 use crate::ui::Palette;
+use crate::waydoodle::OverlaySettings;
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -21,6 +22,29 @@ pub(crate) struct Config {
     pub pad: PadConfig,
     pub keys: KeysConfig,
     pub menu: MenuConfig,
+    pub drawing: DrawingConfig,
+}
+
+impl Config {
+    /// The configured overlay settings, ignoring (and reporting) invalid
+    /// values.
+    pub fn overlay_settings(&self) -> OverlaySettings {
+        let default = OverlaySettings::default();
+        OverlaySettings {
+            keybindings: self.keys.keybindings(),
+            palette: self.menu.palette(),
+            pen: color_or(self.drawing.pen.as_deref(), default.pen),
+            background: color_or(self.drawing.background.as_deref(), default.background),
+            pen_radius: match self.drawing.pen_radius {
+                Some(radius) if radius.is_finite() && radius > 0.0 => radius,
+                Some(radius) => {
+                    warn_user!("Ignoring pen_radius {radius}: it must be greater than zero");
+                    default.pen_radius
+                }
+                None => default.pen_radius,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -96,6 +120,25 @@ impl KeysConfig {
         }
         keybindings
     }
+}
+
+/// How drawing starts out.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub(crate) struct DrawingConfig {
+    pen: Option<String>,
+    background: Option<String>,
+    pen_radius: Option<f64>,
+}
+
+fn color_or(name: Option<&str>, default: Color) -> Color {
+    let Some(name) = name else {
+        return default;
+    };
+    Color::from_name(name).unwrap_or_else(|| {
+        warn_user!("Ignoring unknown color '{name}'");
+        default
+    })
 }
 
 /// The colors offered in the context menu. Each list replaces its default.
@@ -332,6 +375,33 @@ mod tests {
             [Color::BLUE, Color::from_name("#ff8800").unwrap()]
         );
         assert_eq!(palette.backgrounds, Palette::default().backgrounds);
+    }
+
+    #[test]
+    fn drawing_defaults_are_configurable() {
+        let settings = parse("[drawing]\npen = \"blue\"\nbackground = \"black\"\npen_radius = 3\n")
+            .overlay_settings();
+        assert_eq!(settings.pen, Color::BLUE);
+        assert_eq!(settings.background, Color::BLACK);
+        // An integer is accepted where a float is expected.
+        assert_eq!(settings.pen_radius, 3.0);
+    }
+
+    #[test]
+    fn invalid_drawing_defaults_are_ignored() {
+        let default = OverlaySettings::default();
+        for contents in [
+            "[drawing]\npen_radius = 0\n",
+            "[drawing]\npen_radius = -2.5\n",
+            "[drawing]\npen_radius = nan\n",
+        ] {
+            assert_eq!(
+                parse(contents).overlay_settings().pen_radius,
+                default.pen_radius
+            );
+        }
+        let settings = parse("[drawing]\npen = \"chartreuse\"\n").overlay_settings();
+        assert_eq!(settings.pen, default.pen);
     }
 
     #[test]
