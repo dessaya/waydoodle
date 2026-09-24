@@ -33,6 +33,23 @@ impl Default for Palette {
     }
 }
 
+/// The font used in the context menu.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct MenuFont {
+    /// A font family name, or empty for the default font.
+    pub family: String,
+    pub size: f64,
+}
+
+impl Default for MenuFont {
+    fn default() -> Self {
+        Self {
+            family: String::new(),
+            size: 14.0,
+        }
+    }
+}
+
 enum MenuComponent {
     ToolSelector(ToolSelector),
     Item(RowMenuItem),
@@ -472,9 +489,10 @@ impl ContextMenu {
         screen_height: i32,
         keybindings: &Keybindings,
         palette: &Palette,
+        font: &MenuFont,
     ) -> Result<Self> {
         let dummy = UI::dummy_surface()?;
-        let ctx = UI::make_ctx(&dummy)?;
+        let ctx = UI::make_ctx(&dummy, font)?;
 
         let mut menu = build_menu(keybindings, palette);
 
@@ -599,11 +617,10 @@ pub struct UI {
     context_menu: Option<ContextMenu>,
     last_pointer_pos: Option<Point>,
     palette: Palette,
+    font: MenuFont,
 }
 
 impl UI {
-    const FONT_SIZE: f64 = 14.0;
-    const FONT_FAMILY: &str = ""; // use the default font
     const FONT_SLANT: FontSlant = FontSlant::Normal;
     const FONT_WEIGHT: FontWeight = FontWeight::Normal;
 
@@ -611,21 +628,21 @@ impl UI {
         ImageSurface::create(Format::ARgb32, 1, 1)
     }
 
-    fn make_ctx(surface: &ImageSurface) -> Result<Context> {
-        let font_face =
-            FontFace::toy_create(Self::FONT_FAMILY, Self::FONT_SLANT, Self::FONT_WEIGHT)?;
+    fn make_ctx(surface: &ImageSurface, font: &MenuFont) -> Result<Context> {
+        let font_face = FontFace::toy_create(&font.family, Self::FONT_SLANT, Self::FONT_WEIGHT)?;
         let ctx = Context::new(surface)?;
         ctx.set_font_face(&font_face);
-        ctx.set_font_size(Self::FONT_SIZE);
+        ctx.set_font_size(font.size);
         Ok(ctx)
     }
 
-    pub fn new(width: i32, height: i32, palette: Palette) -> Result<Self> {
+    pub fn new(width: i32, height: i32, palette: Palette, font: MenuFont) -> Result<Self> {
         Ok(Self {
             surface: ImageSurface::create(Format::ARgb32, width, height)?,
             context_menu: None,
             last_pointer_pos: None,
             palette,
+            font,
         })
     }
 
@@ -649,6 +666,7 @@ impl UI {
                     self.surface.height(),
                     keybindings,
                     &self.palette,
+                    &self.font,
                 )?);
                 self.render(state)?;
                 return Ok((None, true));
@@ -706,7 +724,7 @@ impl UI {
     }
 
     fn render(&mut self, state: &State) -> Result<()> {
-        let ctx = UI::make_ctx(&self.surface)?;
+        let ctx = UI::make_ctx(&self.surface, &self.font)?;
         ctx.set_source_rgba(0.0, 0.0, 0.0, 0.0);
         ctx.set_operator(cairo::Operator::Source);
         ctx.paint()?;
@@ -725,6 +743,7 @@ impl UI {
                 self.surface.height(),
                 keybindings,
                 &self.palette,
+                &self.font,
             )?);
             self.render(state)?;
         }
@@ -882,6 +901,31 @@ mod tests {
             color_rows(&menu),
             [("Pen", vec![(orange, ""), (Color::RED, "R")])]
         );
+    }
+
+    #[test]
+    fn menu_is_sized_for_its_font() -> Result<()> {
+        let menu_size = |size: f64| -> Result<(i32, i32)> {
+            let font = MenuFont {
+                size,
+                ..MenuFont::default()
+            };
+            let pos = Point { x: 0.0, y: 0.0 };
+            let menu = ContextMenu::new(
+                pos,
+                2000,
+                2000,
+                &Keybindings::default(),
+                &Palette::default(),
+                &font,
+            )?;
+            Ok((menu.rect.width, menu.rect.height))
+        };
+        let (small_w, small_h) = menu_size(14.0)?;
+        let (large_w, large_h) = menu_size(28.0)?;
+        assert!(large_w > small_w, "{large_w} <= {small_w}");
+        assert!(large_h > small_h, "{large_h} <= {small_h}");
+        Ok(())
     }
 
     #[test]

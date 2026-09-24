@@ -3,7 +3,7 @@ use smithay_client_toolkit::seat::keyboard::Keysym;
 use crate::{
     actions::{Action, Keybindings},
     canvas::{Canvas, Color, Point, Rectangle},
-    ui::{self, Palette, UI},
+    ui::{self, MenuFont, Palette, UI},
 };
 
 pub type Result<T> = std::result::Result<T, cairo::Error>;
@@ -64,6 +64,7 @@ pub(crate) enum HistoryItem {
 pub(crate) struct OverlaySettings {
     pub keybindings: Keybindings,
     pub palette: Palette,
+    pub menu_font: MenuFont,
     /// The pen color to start with.
     pub pen: Color,
     /// The background color to start with, and to go back to on undo.
@@ -76,6 +77,7 @@ impl Default for OverlaySettings {
         Self {
             keybindings: Keybindings::default(),
             palette: Palette::default(),
+            menu_font: MenuFont::default(),
             pen: Color::RED,
             background: Color::TRANSPARENT,
             pen_radius: 1.5,
@@ -103,6 +105,7 @@ impl OverlayState {
         let OverlaySettings {
             keybindings,
             palette,
+            menu_font,
             pen,
             background,
             pen_radius,
@@ -116,7 +119,7 @@ impl OverlayState {
             primary_tool: Tool::Pen(pen),
             override_tool: None,
             history: Vec::new(),
-            ui: UI::new(width, height, palette)?,
+            ui: UI::new(width, height, palette, menu_font)?,
             keep_open: true,
             keybindings,
             base_background: background,

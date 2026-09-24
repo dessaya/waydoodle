@@ -148,10 +148,13 @@ enabled = true
 x = "pen-red"
 r = "none"
 
-# Colors offered in the context menu. Each list replaces its default.
+# Colors offered in the context menu, where each list replaces its default,
+# and the menu font. An unknown font name falls back to the default font.
 [menu]
 pens = ["red", "green", "blue", "#ff8800"]
 backgrounds = ["black", "transparent"]
+font = "Sans"
+font_size = 14
 
 # How drawing starts out. The pen radius is in pixels.
 [drawing]

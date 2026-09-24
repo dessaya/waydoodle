@@ -13,7 +13,7 @@ use xkbcommon::xkb;
 use crate::actions::{Action, GlobalAccels, GlobalAction, GlobalTrigger, KeyMode, Keybindings};
 use crate::canvas::Color;
 use crate::notify::warn_user;
-use crate::ui::Palette;
+use crate::ui::{MenuFont, Palette};
 use crate::waydoodle::OverlaySettings;
 
 #[derive(Debug, Default, Deserialize)]
@@ -33,6 +33,7 @@ impl Config {
         OverlaySettings {
             keybindings: self.keys.keybindings(),
             palette: self.menu.palette(),
+            menu_font: self.menu.font(),
             pen: color_or(self.drawing.pen.as_deref(), default.pen),
             background: color_or(self.drawing.background.as_deref(), default.background),
             pen_radius: match self.drawing.pen_radius {
@@ -147,6 +148,8 @@ fn color_or(name: Option<&str>, default: Color) -> Color {
 pub(crate) struct MenuConfig {
     pens: Option<Vec<String>>,
     backgrounds: Option<Vec<String>>,
+    font: Option<String>,
+    font_size: Option<f64>,
 }
 
 impl MenuConfig {
@@ -159,6 +162,22 @@ impl MenuConfig {
                 .backgrounds
                 .as_deref()
                 .map_or(default.backgrounds, parse_colors),
+        }
+    }
+
+    /// The configured font, ignoring (and reporting) an invalid size.
+    pub fn font(&self) -> MenuFont {
+        let default = MenuFont::default();
+        MenuFont {
+            family: self.font.clone().unwrap_or(default.family),
+            size: match self.font_size {
+                Some(size) if size.is_finite() && size > 0.0 => size,
+                Some(size) => {
+                    warn_user!("Ignoring font_size {size}: it must be greater than zero");
+                    default.size
+                }
+                None => default.size,
+            },
         }
     }
 }
@@ -402,6 +421,24 @@ mod tests {
         }
         let settings = parse("[drawing]\npen = \"chartreuse\"\n").overlay_settings();
         assert_eq!(settings.pen, default.pen);
+    }
+
+    #[test]
+    fn menu_font_is_configurable() {
+        let font = parse("[menu]\nfont = \"Serif\"\nfont_size = 20\n")
+            .menu
+            .font();
+        assert_eq!(
+            font,
+            MenuFont {
+                family: "Serif".to_string(),
+                size: 20.0
+            }
+        );
+        assert_eq!(
+            parse("[menu]\nfont_size = 0\n").menu.font().size,
+            MenuFont::default().size
+        );
     }
 
     #[test]
