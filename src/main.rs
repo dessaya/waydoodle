@@ -29,7 +29,8 @@ pub(crate) struct Options {
 }
 
 fn main() {
-    env_logger::init();
+    // Warnings are the only log messages a user is meant to act on.
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
     let mut options = Options::default();
     let mut args = std::env::args().skip(1);
