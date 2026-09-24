@@ -202,8 +202,12 @@ impl App {
                     pending_damage: Vec::new(),
                     frame_requested: false,
                     has_focus: true,
-                    state: waydoodle::OverlayState::new(width, height, self.keybindings.clone())
-                        .expect("Failed to create overlay state"),
+                    state: waydoodle::OverlayState::new(
+                        width,
+                        height,
+                        self.overlay_settings.clone(),
+                    )
+                    .expect("Failed to create overlay state"),
                 };
                 if let Some(damage) = overlay.state.take_damage() {
                     overlay.mark_dirty(&self.queue_handle, damage);

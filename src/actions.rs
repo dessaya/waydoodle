@@ -139,10 +139,6 @@ impl Keybindings {
             .map(|(key, _)| *key)
     }
 
-    pub(crate) fn always(&self) -> &[(Keysym, Action)] {
-        &self.always
-    }
-
     /// Binds `keysym` to `action`, replacing its binding in the same mode.
     pub(crate) fn bind(&mut self, mode: KeyMode, keysym: Keysym, action: Action) {
         let table = self.table(mode);

@@ -10,6 +10,29 @@ use crate::{
     waydoodle::{InputButton, Result, Tool},
 };
 
+/// The colors offered in the context menu.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Palette {
+    pub pens: Vec<Color>,
+    pub backgrounds: Vec<Color>,
+}
+
+impl Default for Palette {
+    fn default() -> Self {
+        Self {
+            pens: vec![
+                Color::RED,
+                Color::GREEN,
+                Color::BLUE,
+                Color::YELLOW,
+                Color::MAGENTA,
+                Color::CYAN,
+            ],
+            backgrounds: vec![Color::BLACK, Color::WHITE, Color::TRANSPARENT],
+        }
+    }
+}
+
 enum MenuComponent {
     ToolSelector(ToolSelector),
     Item(RowMenuItem),
@@ -53,7 +76,7 @@ impl MenuButton {
     }
 }
 
-fn build_menu(keybindings: &Keybindings) -> Vec<MenuComponent> {
+fn build_menu(keybindings: &Keybindings, palette: &Palette) -> Vec<MenuComponent> {
     let mut next_id = {
         let mut id = 0usize;
         move || {
@@ -63,10 +86,26 @@ fn build_menu(keybindings: &Keybindings) -> Vec<MenuComponent> {
         }
     };
 
-    vec![
-        MenuComponent::ToolSelector(build_pen_tool_selector(&mut next_id, keybindings)),
-        MenuComponent::ToolSelector(build_eraser_tool_selector(&mut next_id, keybindings)),
-        MenuComponent::ToolSelector(build_background_tool_selector(&mut next_id, keybindings)),
+    let mut menu = Vec::new();
+    if !palette.pens.is_empty() {
+        menu.push(MenuComponent::ToolSelector(build_pen_tool_selector(
+            &mut next_id,
+            keybindings,
+            &palette.pens,
+        )));
+    }
+    menu.push(MenuComponent::ToolSelector(build_eraser_tool_selector(
+        &mut next_id,
+        keybindings,
+    )));
+    if !palette.backgrounds.is_empty() {
+        menu.push(MenuComponent::ToolSelector(build_background_tool_selector(
+            &mut next_id,
+            keybindings,
+            &palette.backgrounds,
+        )));
+    }
+    menu.extend([
         MenuComponent::Item(build_row_menu_item(
             &mut next_id,
             keybindings,
@@ -85,29 +124,28 @@ fn build_menu(keybindings: &Keybindings) -> Vec<MenuComponent> {
             "Hide overlay",
             Action::HideOverlay,
         )),
-    ]
+    ]);
+    menu
 }
 
 fn build_pen_tool_selector(
     next_id: &mut impl FnMut() -> usize,
     keybindings: &Keybindings,
+    colors: &[Color],
 ) -> ToolSelector {
     build_tool_selector(
         "Pen",
         next_id,
-        keybindings
-            .always()
-            .iter()
-            .filter_map(|&(keysym, action)| match action {
-                Action::SetTool(Tool::Pen(color)) => Some((
-                    Some(keysym),
-                    action,
-                    color,
-                    Box::new(move |s: &State| s.primary_tool == Tool::Pen(color))
-                        as Box<dyn Fn(&State) -> bool>,
-                )),
-                _ => None,
-            }),
+        colors.iter().map(|&color| {
+            let action = Action::SetTool(Tool::Pen(color));
+            (
+                keybindings.key(action),
+                action,
+                color,
+                Box::new(move |s: &State| s.primary_tool == Tool::Pen(color))
+                    as Box<dyn Fn(&State) -> bool>,
+            )
+        }),
     )
 }
 
@@ -131,23 +169,21 @@ fn build_eraser_tool_selector(
 fn build_background_tool_selector(
     next_id: &mut impl FnMut() -> usize,
     keybindings: &Keybindings,
+    colors: &[Color],
 ) -> ToolSelector {
     build_tool_selector(
         "Background",
         next_id,
-        keybindings
-            .always()
-            .iter()
-            .filter_map(|&(keysym, action)| match action {
-                Action::SetBackground(color) => Some((
-                    Some(keysym),
-                    action,
-                    color,
-                    Box::new(move |s: &State| s.background_color == color)
-                        as Box<dyn Fn(&State) -> bool>,
-                )),
-                _ => None,
-            }),
+        colors.iter().map(|&color| {
+            let action = Action::SetBackground(color);
+            (
+                keybindings.key(action),
+                action,
+                color,
+                Box::new(move |s: &State| s.background_color == color)
+                    as Box<dyn Fn(&State) -> bool>,
+            )
+        }),
     )
 }
 
@@ -435,11 +471,12 @@ impl ContextMenu {
         screen_width: i32,
         screen_height: i32,
         keybindings: &Keybindings,
+        palette: &Palette,
     ) -> Result<Self> {
         let dummy = UI::dummy_surface()?;
         let ctx = UI::make_ctx(&dummy)?;
 
-        let mut menu = build_menu(keybindings);
+        let mut menu = build_menu(keybindings, palette);
 
         // First pass: compute the menu size
         let mut menu_w = 0;
@@ -561,6 +598,7 @@ pub struct UI {
     surface: ImageSurface,
     context_menu: Option<ContextMenu>,
     last_pointer_pos: Option<Point>,
+    palette: Palette,
 }
 
 impl UI {
@@ -582,11 +620,12 @@ impl UI {
         Ok(ctx)
     }
 
-    pub fn new(width: i32, height: i32) -> Result<Self> {
+    pub fn new(width: i32, height: i32, palette: Palette) -> Result<Self> {
         Ok(Self {
             surface: ImageSurface::create(Format::ARgb32, width, height)?,
             context_menu: None,
             last_pointer_pos: None,
+            palette,
         })
     }
 
@@ -609,6 +648,7 @@ impl UI {
                     self.surface.width(),
                     self.surface.height(),
                     keybindings,
+                    &self.palette,
                 )?);
                 self.render(state)?;
                 return Ok((None, true));
@@ -684,6 +724,7 @@ impl UI {
                 self.surface.width(),
                 self.surface.height(),
                 keybindings,
+                &self.palette,
             )?);
             self.render(state)?;
         }
@@ -781,6 +822,67 @@ impl UI {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The color rows of a menu, as (row name, [(swatch, key label)]).
+    fn color_rows(menu: &[MenuComponent]) -> Vec<(&str, Vec<(Color, &str)>)> {
+        menu.iter()
+            .filter_map(|component| match component {
+                MenuComponent::ToolSelector(selector) if selector.name != "Eraser" => Some((
+                    selector.name,
+                    selector
+                        .items
+                        .iter()
+                        .map(|item| (item.swatch, item.btn.accel.as_str()))
+                        .collect(),
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn default_menu_is_unchanged() {
+        let menu = build_menu(&Keybindings::default(), &Palette::default());
+        assert_eq!(
+            color_rows(&menu),
+            [
+                (
+                    "Pen",
+                    vec![
+                        (Color::RED, "R"),
+                        (Color::GREEN, "G"),
+                        (Color::BLUE, "B"),
+                        (Color::YELLOW, "Y"),
+                        (Color::MAGENTA, "M"),
+                        (Color::CYAN, "N"),
+                    ]
+                ),
+                (
+                    "Background",
+                    vec![
+                        (Color::BLACK, "."),
+                        (Color::WHITE, ","),
+                        (Color::TRANSPARENT, "/"),
+                    ]
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn menu_colors_come_from_the_palette() {
+        let orange = Color::from_name("#ff8800").unwrap();
+        let palette = Palette {
+            pens: vec![orange, Color::RED],
+            backgrounds: Vec::new(),
+        };
+        let menu = build_menu(&Keybindings::default(), &palette);
+        // A color without a key has no label, and an empty row is left out.
+        assert_eq!(
+            color_rows(&menu),
+            [("Pen", vec![(orange, ""), (Color::RED, "R")])]
+        );
+    }
 
     #[test]
     fn default_keys_keep_their_labels() {

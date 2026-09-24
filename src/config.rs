@@ -11,13 +11,16 @@ use smithay_client_toolkit::seat::keyboard::Keysym;
 use xkbcommon::xkb;
 
 use crate::actions::{Action, GlobalAccels, GlobalAction, GlobalTrigger, KeyMode, Keybindings};
+use crate::canvas::Color;
 use crate::notify::warn_user;
+use crate::ui::Palette;
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub(crate) struct Config {
     pub pad: PadConfig,
     pub keys: KeysConfig,
+    pub menu: MenuConfig,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -93,6 +96,41 @@ impl KeysConfig {
         }
         keybindings
     }
+}
+
+/// The colors offered in the context menu. Each list replaces its default.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub(crate) struct MenuConfig {
+    pens: Option<Vec<String>>,
+    backgrounds: Option<Vec<String>>,
+}
+
+impl MenuConfig {
+    /// The configured palette, ignoring (and reporting) unknown color names.
+    pub fn palette(&self) -> Palette {
+        let default = Palette::default();
+        Palette {
+            pens: self.pens.as_deref().map_or(default.pens, parse_colors),
+            backgrounds: self
+                .backgrounds
+                .as_deref()
+                .map_or(default.backgrounds, parse_colors),
+        }
+    }
+}
+
+fn parse_colors(names: &[String]) -> Vec<Color> {
+    names
+        .iter()
+        .filter_map(|name| {
+            let color = Color::from_name(name);
+            if color.is_none() {
+                warn_user!("Ignoring unknown color '{name}'");
+            }
+            color
+        })
+        .collect()
 }
 
 /// Parses an xkb keysym name such as `space` or `Escape`, ignoring case, or a
@@ -276,6 +314,24 @@ mod tests {
         let keys = keys("[keys.always]\nnonsense = \"undo\"\nx = \"clear\"\n");
         assert_eq!(keys.action(Keysym::x, false), Some(Action::Clear));
         assert_eq!(keys.action(Keysym::u, false), Some(Action::Undo));
+    }
+
+    #[test]
+    fn default_palette_is_used_when_no_menu_is_configured() {
+        assert_eq!(parse("").menu.palette(), Palette::default());
+    }
+
+    #[test]
+    fn configured_colors_replace_their_default_list() {
+        let palette = parse("[menu]\npens = [\"blue\", \"#ff8800\", \"chartreuse\"]\n")
+            .menu
+            .palette();
+        // The unknown color is skipped.
+        assert_eq!(
+            palette.pens,
+            [Color::BLUE, Color::from_name("#ff8800").unwrap()]
+        );
+        assert_eq!(palette.backgrounds, Palette::default().backgrounds);
     }
 
     #[test]

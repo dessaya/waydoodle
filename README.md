@@ -147,6 +147,11 @@ enabled = true
 [keys.always]
 x = "pen-red"
 r = "none"
+
+# Colors offered in the context menu. Each list replaces its default.
+[menu]
+pens = ["red", "green", "blue", "#ff8800"]
+backgrounds = ["black", "transparent"]
 ```
 
 Keyboard shortcuts go in one of three sections: `keys.always`,

@@ -3,7 +3,7 @@ use smithay_client_toolkit::seat::keyboard::Keysym;
 use crate::{
     actions::{Action, Keybindings},
     canvas::{Canvas, Color, Point, Rectangle},
-    ui::{self, UI},
+    ui::{self, Palette, UI},
 };
 
 pub type Result<T> = std::result::Result<T, cairo::Error>;
@@ -69,6 +69,13 @@ pub(crate) enum HistoryItem {
     Clear(Color),
 }
 
+/// The parts of an overlay that come from the configuration.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct OverlaySettings {
+    pub keybindings: Keybindings,
+    pub palette: Palette,
+}
+
 pub(crate) struct OverlayState {
     pub canvas: Canvas,
     pub current_stroke: Option<Stroke>,
@@ -83,7 +90,11 @@ pub(crate) struct OverlayState {
 }
 
 impl OverlayState {
-    pub fn new(width: i32, height: i32, keybindings: Keybindings) -> Result<Self> {
+    pub fn new(width: i32, height: i32, settings: OverlaySettings) -> Result<Self> {
+        let OverlaySettings {
+            keybindings,
+            palette,
+        } = settings;
         let canvas = Canvas::new(width, height)?;
         let rect = canvas.rect();
         Ok(Self {
@@ -93,7 +104,7 @@ impl OverlayState {
             primary_tool: Tool::default(),
             override_tool: None,
             history: Vec::new(),
-            ui: UI::new(width, height)?,
+            ui: UI::new(width, height, palette)?,
             keep_open: true,
             keybindings,
             damage: vec![rect],
@@ -425,7 +436,7 @@ mod tests {
     const TEST_HEIGHT: i32 = 64;
 
     fn new_overlay_state() -> Result<OverlayState> {
-        OverlayState::new(TEST_WIDTH, TEST_HEIGHT, Keybindings::default())
+        OverlayState::new(TEST_WIDTH, TEST_HEIGHT, OverlaySettings::default())
     }
 
     struct MockApp {
