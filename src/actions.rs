@@ -15,7 +15,7 @@ pub(crate) enum Action {
     CloseContextMenu,
     Focus(FocusDirection),
     ApplyMenuSelection,
-    HideOverlay,
+    CloseOverlay,
 }
 
 /// Something that can be triggered while the overlay is absent or unfocused.
@@ -47,9 +47,7 @@ impl fmt::Display for Action {
             Self::Focus(FocusDirection::Down) => f.write_str("menu-down"),
             Self::Focus(FocusDirection::Left) => f.write_str("menu-left"),
             Self::Focus(FocusDirection::Right) => f.write_str("menu-right"),
-            // Named like GlobalAction::CloseOverlay, which does the same when
-            // the overlay is focused.
-            Self::HideOverlay => f.write_str("close-overlay"),
+            Self::CloseOverlay => f.write_str("close-overlay"),
         }
     }
 }
@@ -73,7 +71,7 @@ impl Action {
             "menu-down" => Self::Focus(FocusDirection::Down),
             "menu-left" => Self::Focus(FocusDirection::Left),
             "menu-right" => Self::Focus(FocusDirection::Right),
-            "close-overlay" => Self::HideOverlay,
+            "close-overlay" => Self::CloseOverlay,
             _ => return None,
         })
     }
@@ -196,7 +194,7 @@ const DEFAULT_ACCELS_ALWAYS: &[(Keysym, Action)] = &[
 
 const DEFAULT_ACCELS_MENU_CLOSED: &[(Keysym, Action)] = &[
     (Keysym::space, Action::OpenContextMenu),
-    (Keysym::Escape, Action::HideOverlay),
+    (Keysym::Escape, Action::CloseOverlay),
 ];
 
 const DEFAULT_ACCELS_MENU_OPEN: &[(Keysym, Action)] = &[
@@ -311,7 +309,7 @@ mod tests {
             Action::Focus(FocusDirection::Down),
             Action::Focus(FocusDirection::Left),
             Action::Focus(FocusDirection::Right),
-            Action::HideOverlay,
+            Action::CloseOverlay,
         ];
         for action in all {
             assert_eq!(Action::from_name(&action.to_string()), Some(action));
@@ -338,7 +336,7 @@ mod tests {
         // On a key, the overlay is always there.
         assert_eq!(
             Action::from_name("close-overlay"),
-            Some(Action::HideOverlay)
+            Some(Action::CloseOverlay)
         );
     }
 
@@ -377,7 +375,7 @@ mod tests {
     fn keybindings_find_the_key_shown_in_the_menu() {
         let keys = Keybindings::default();
         assert_eq!(keys.key(Action::SetTool(Tool::Eraser)), Some(Keysym::e));
-        assert_eq!(keys.key(Action::HideOverlay), Some(Keysym::Escape));
+        assert_eq!(keys.key(Action::CloseOverlay), Some(Keysym::Escape));
         // Only bound while the menu is open, so there is nothing to show.
         assert_eq!(keys.key(Action::CloseContextMenu), None);
     }

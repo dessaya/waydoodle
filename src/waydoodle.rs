@@ -157,7 +157,7 @@ impl OverlayState {
                 }
                 self.ui.close_context_menu(&self.ui_state())?;
             }
-            Action::HideOverlay => {
+            Action::CloseOverlay => {
                 self.keep_open = false;
             }
         };
@@ -581,7 +581,7 @@ mod tests {
     }
 
     #[test]
-    fn on_key_pressed_escape_returns_hide() -> Result<()> {
+    fn on_key_pressed_escape_closes_overlay() -> Result<()> {
         let mut overlay = new_overlay_state()?;
         let _ = overlay.take_damage();
         overlay.on_key_pressed(Keysym::Escape)?;

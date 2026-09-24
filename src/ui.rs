@@ -121,8 +121,8 @@ fn build_menu(keybindings: &Keybindings, palette: &Palette) -> Vec<MenuComponent
         MenuComponent::Item(build_row_menu_item(
             &mut next_id,
             keybindings,
-            "Hide overlay",
-            Action::HideOverlay,
+            "Close overlay",
+            Action::CloseOverlay,
         )),
     ]);
     menu
