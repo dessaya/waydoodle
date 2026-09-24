@@ -1,7 +1,7 @@
 # Waydoodle
 
 A minimalistic Wayland screen annotation tool. Draw on your screen during
-presentations, demos, or video calls — on any Wayland compositor.
+presentations, demos, or video calls.
 
 ![Waydoodle screenshot](./screenshot.png)
 
@@ -14,6 +14,7 @@ of use. Some of its features include:
 - Global shortcut (see [below](#global-shortcut))
 - Mouse & tablet support
 - Tablet pad buttons
+- Configuration file
 - Context menu
 - Undo
 
@@ -88,12 +89,8 @@ While the overlay is focused, just draw with your mouse or tablet.
 
 ## Tablet pad buttons
 
-If your drawing tablet has buttons on its side, Waydoodle can listen to them
-directly:
-
-```
-waydoodle --tablet-pad
-```
+If your drawing tablet has buttons on its side, Waydoodle listens to them out
+of the box:
 
 | Button | Action |
 |--------|--------|
@@ -104,15 +101,15 @@ waydoodle --tablet-pad
 | 4 | Green pen |
 | 5 | Magenta pen |
 
-The buttons are numbered the way `libinput debug-events` reports them. The
-bindings are not configurable yet, and neither is the `--tablet-pad` flag
-permanent: both will be replaced by a configuration file.
+The buttons are numbered the way `libinput debug-events` reports them, and are
+configurable (see [below](#configuration)). To turn the whole thing off, run
+`waydoodle --no-tablet-pad` or set `enabled = false` under `[pad]`.
 
 Waydoodle reads the pad device directly instead of going through the
 compositor, because the Wayland tablet protocol is not implemented by every
 compositor (niri, for instance, never sends pad events to clients), and where
-it is, the buttons only work while the overlay is focused — which is of no use
-for the button that is supposed to bring it up.
+it is, the buttons only work while the overlay is focused (which prevents
+using them to toggle the overlay on and off).
 
 This means your user needs permission to read the tablet pad device, which on
 most distributions means being a member of the `input` group:
@@ -121,10 +118,56 @@ most distributions means being a member of the `input` group:
 sudo usermod -aG input $USER
 ```
 
-Log out and back in for it to take effect.
+Log out and back in for it to take effect. On a machine with no tablet pad
+connected, nothing under `/dev/input` is opened at all.
 
 If the buttons do nothing, run Waydoodle with `RUST_LOG=waydoodle=debug` to see
 which pads it found and which buttons they report.
+
+## Configuration
+
+Waydoodle reads `$XDG_CONFIG_HOME/waydoodle/config.toml`, or
+`~/.config/waydoodle/config.toml` if `XDG_CONFIG_HOME` is unset. The file is
+optional, and so is every setting in it. Use `--config PATH` to read a
+different file.
+
+```toml
+[pad]
+# Listen to drawing tablet pad buttons. Default: true.
+enabled = true
+
+# Pad button bindings. Listing any button replaces the whole default table,
+# so include every button you want bound.
+[pad.buttons]
+0 = "toggle-overlay"
+1 = "close-overlay"
+2 = "eraser"
+3 = "pen-red"
+4 = "pen-green"
+5 = "pen-magenta"
+```
+
+The available actions are:
+
+| Action | Meaning |
+|--------|---------|
+| `toggle-overlay` | Show the overlay, or toggle drawing mode if it is already up |
+| `close-overlay` | Close the overlay, discarding the drawing |
+| `hide-overlay` | Same, but only when an overlay exists |
+| `pen-<color>` | Draw with a pen of that color |
+| `background-<color>` | Fill the background with that color |
+| `eraser` | Switch to the eraser |
+| `clear` | Clear the drawing |
+| `undo` | Undo the last stroke |
+| `menu-open`, `menu-close` | Open or close the context menu |
+| `menu-up`, `menu-down`, `menu-left`, `menu-right` | Move the menu selection |
+| `menu-apply` | Activate the selected menu item |
+
+A color is one of `red`, `green`, `blue`, `yellow`, `magenta`, `cyan`, `black`,
+`white`, `transparent`, or a hex value such as `#ff8800` or `#ff880080`.
+
+A broken configuration file is reported but doesn't prevent Waydoodle from
+running. Set `RUST_LOG=waydoodle=warn` to see the warnings.
 
 ## Global shortcuts
 
