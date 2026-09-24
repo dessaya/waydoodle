@@ -32,10 +32,12 @@ pub(crate) trait PadHost: Sized + 'static {
 pub(crate) struct Pads(HashMap<PathBuf, RegistrationToken>);
 
 /// Starts listening to the buttons of every tablet pad, now and as they get
-/// plugged in.
-pub(crate) fn listen<H: PadHost>(host: &mut H) {
+/// plugged in. `requested` tells whether the user asked for pad support, as
+/// opposed to just not having turned it off: problems are only worth a
+/// notification in the former case.
+pub(crate) fn listen<H: PadHost>(host: &mut H, requested: bool) {
     match monitor() {
-        Ok(monitor) => watch_device_changes(host, monitor),
+        Ok(monitor) => watch_device_changes(host, monitor, requested),
         Err(e) => log::warn!("Failed to watch for tablet pads: {e}"),
     }
     let devnodes = enumerate();
@@ -43,15 +45,15 @@ pub(crate) fn listen<H: PadHost>(host: &mut H) {
         log::debug!("No tablet pads found");
     }
     for devnode in devnodes {
-        add(host, &devnode);
+        add(host, &devnode, requested);
     }
 }
 
-fn watch_device_changes<H: PadHost>(host: &mut H, monitor: udev::MonitorSocket) {
+fn watch_device_changes<H: PadHost>(host: &mut H, monitor: udev::MonitorSocket, requested: bool) {
     let source = Generic::new(monitor, Interest::READ, Mode::Level);
     let r = host
         .loop_handle()
-        .insert_source(source, |_readiness, monitor, host: &mut H| {
+        .insert_source(source, move |_readiness, monitor, host: &mut H| {
             let changes: Vec<_> = monitor
                 .iter()
                 .map(|event| {
@@ -68,7 +70,7 @@ fn watch_device_changes<H: PadHost>(host: &mut H, monitor: udev::MonitorSocket) 
                     continue;
                 };
                 match event_type {
-                    udev::EventType::Add if is_pad => add(host, &devnode),
+                    udev::EventType::Add if is_pad => add(host, &devnode, requested),
                     // A removed device no longer reports its properties, so
                     // just check whether we were listening to it.
                     udev::EventType::Remove => remove(host, &devnode),
@@ -82,11 +84,11 @@ fn watch_device_changes<H: PadHost>(host: &mut H, monitor: udev::MonitorSocket) 
     }
 }
 
-fn add<H: PadHost>(host: &mut H, devnode: &Path) {
+fn add<H: PadHost>(host: &mut H, devnode: &Path, requested: bool) {
     if host.pads().0.contains_key(devnode) {
         return;
     }
-    let Some(pad) = Pad::open(devnode) else {
+    let Some(pad) = Pad::open(devnode, requested) else {
         return;
     };
     let path = devnode.to_path_buf();
@@ -184,15 +186,22 @@ struct Pad {
 impl Pad {
     /// Opens a tablet pad, or returns `None` if it can't be read or has no
     /// buttons.
-    fn open(devnode: &Path) -> Option<Self> {
+    fn open(devnode: &Path, requested: bool) -> Option<Self> {
         let device = match Device::open(devnode) {
             Ok(device) => device,
             Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
-                warn_user!(
+                let message = format!(
                     "Not allowed to read tablet pad {}: add your user to the \
                      'input' group to use pad buttons",
                     devnode.display()
                 );
+                // Nagging about a feature that is merely on by default would
+                // be rude to someone who only uses the stylus.
+                if requested {
+                    warn_user!("{message}");
+                } else {
+                    log::warn!("{message}");
+                }
                 return None;
             }
             Err(e) => {

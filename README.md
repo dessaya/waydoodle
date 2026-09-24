@@ -166,8 +166,6 @@ The available actions are:
 A color is one of `red`, `green`, `blue`, `yellow`, `magenta`, `cyan`, `black`,
 `white`, `transparent`, or a hex value such as `#ff8800` or `#ff880080`.
 
-A broken configuration file is reported but doesn't prevent Waydoodle from
-running. Set `RUST_LOG=waydoodle=warn` to see the warnings.
 
 ## Global shortcuts
 

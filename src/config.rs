@@ -17,21 +17,14 @@ pub(crate) struct Config {
     pub pad: PadConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub(crate) struct PadConfig {
-    pub enabled: bool,
+    /// `None` when the user didn't say either way, in which case pad support
+    /// is on, but quietly.
+    pub enabled: Option<bool>,
     /// Action names by button number. Replaces the defaults when present.
     buttons: Option<HashMap<u32, String>>,
-}
-
-impl Default for PadConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            buttons: None,
-        }
-    }
 }
 
 impl PadConfig {
@@ -112,10 +105,11 @@ mod tests {
     }
 
     #[test]
-    fn pad_is_enabled_by_default() {
-        assert!(Config::default().pad.enabled);
-        assert!(parse("").pad.enabled);
-        assert!(!parse("[pad]\nenabled = false\n").pad.enabled);
+    fn pad_support_is_unset_unless_configured() {
+        assert_eq!(Config::default().pad.enabled, None);
+        assert_eq!(parse("").pad.enabled, None);
+        assert_eq!(parse("[pad]\nenabled = false\n").pad.enabled, Some(false));
+        assert_eq!(parse("[pad]\nenabled = true\n").pad.enabled, Some(true));
     }
 
     #[test]

@@ -153,8 +153,11 @@ impl App {
                 .expect("Failed to insert tray event source");
         }
 
-        if options.tablet_pad.unwrap_or(config.pad.enabled) {
-            pad::listen(&mut app);
+        // Pad support is on unless it is turned off, but a user who asked for
+        // it explicitly gets told when it doesn't work.
+        let pad = options.tablet_pad.or(config.pad.enabled);
+        if pad.unwrap_or(true) {
+            pad::listen(&mut app, pad.is_some());
         }
 
         event_loop
