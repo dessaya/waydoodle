@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use crate::actions::{GlobalAccels, GlobalAction, GlobalTrigger};
+use crate::notify::warn_user;
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -44,7 +45,7 @@ impl PadConfig {
             .filter_map(|(button, name)| match GlobalAction::from_name(name) {
                 Some(action) => Some((GlobalTrigger::PadButton(*button), action)),
                 None => {
-                    log::warn!("Ignoring unknown action '{name}' bound to pad button {button}");
+                    warn_user!("Ignoring unknown action '{name}' bound to pad button {button}");
                     None
                 }
             })
@@ -73,7 +74,7 @@ pub(crate) fn load(path: Option<&Path>) -> Config {
             return Config::default();
         }
         Err(e) => {
-            log::warn!("Failed to read {}: {e}", path.display());
+            warn_user!("Failed to read {}: {e}", path.display());
             return Config::default();
         }
     };
@@ -84,7 +85,10 @@ pub(crate) fn load(path: Option<&Path>) -> Config {
             config
         }
         Err(e) => {
-            log::warn!("Failed to parse {}: {e}", path.display());
+            // The full error spans several lines, which reads badly in a
+            // notification.
+            log::debug!("{e}");
+            warn_user!("Failed to parse {}: {}", path.display(), e.message());
             Config::default()
         }
     }

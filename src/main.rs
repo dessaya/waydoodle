@@ -1,6 +1,7 @@
 mod actions;
 mod canvas;
 mod config;
+mod notify;
 mod pad;
 mod tray;
 mod ui;

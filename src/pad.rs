@@ -17,6 +17,8 @@ use calloop::generic::Generic;
 use calloop::{Interest, LoopHandle, Mode, PostAction, RegistrationToken};
 use evdev::{Device, EventSummary, KeyCode};
 
+use crate::notify::warn_user;
+
 /// Implemented by the application, so that this module doesn't need to know
 /// anything about it.
 pub(crate) trait PadHost: Sized + 'static {
@@ -186,7 +188,7 @@ impl Pad {
         let device = match Device::open(devnode) {
             Ok(device) => device,
             Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
-                log::warn!(
+                warn_user!(
                     "Not allowed to read tablet pad {}: add your user to the \
                      'input' group to use pad buttons",
                     devnode.display()

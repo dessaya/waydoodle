@@ -23,6 +23,7 @@ udev = "0.9"
 evdev = "0.13"
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1.6"
+zbus = { version = "5.19.0", default-features = false, features = ["blocking-api"] }
 
 [package.metadata.deb]
 depends = "libc6, libwayland-client0, libudev1"
