@@ -212,6 +212,14 @@ impl GlobalAccels {
     pub(crate) fn get(&self, trigger: GlobalTrigger) -> Option<GlobalAction> {
         self.0.get(&trigger).copied()
     }
+
+    pub(crate) fn bind(&mut self, trigger: GlobalTrigger, action: GlobalAction) {
+        self.0.insert(trigger, action);
+    }
+
+    pub(crate) fn unbind(&mut self, trigger: GlobalTrigger) {
+        self.0.remove(&trigger);
+    }
 }
 
 impl Default for GlobalAccels {

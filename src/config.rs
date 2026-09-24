@@ -23,26 +23,33 @@ pub(crate) struct PadConfig {
     /// `None` when the user didn't say either way, in which case pad support
     /// is on, but quietly.
     pub enabled: Option<bool>,
-    /// Action names by button number. Replaces the defaults when present.
-    buttons: Option<HashMap<u32, String>>,
+    /// Action names by button number, added to the defaults or overriding
+    /// them.
+    buttons: HashMap<u32, String>,
 }
 
+/// An action name that removes a default binding.
+const NONE: &str = "none";
+
 impl PadConfig {
-    /// The configured bindings, ignoring (and reporting) unknown action names.
+    /// The default bindings with the configured ones applied, ignoring (and
+    /// reporting) unknown action names.
     pub fn accels(&self) -> GlobalAccels {
-        let Some(buttons) = &self.buttons else {
-            return GlobalAccels::default();
-        };
-        buttons
-            .iter()
-            .filter_map(|(button, name)| match GlobalAction::from_name(name) {
-                Some(action) => Some((GlobalTrigger::PadButton(*button), action)),
+        let mut accels = GlobalAccels::default();
+        for (&button, name) in &self.buttons {
+            let trigger = GlobalTrigger::PadButton(button);
+            if name == NONE {
+                accels.unbind(trigger);
+                continue;
+            }
+            match GlobalAction::from_name(name) {
+                Some(action) => accels.bind(trigger, action),
                 None => {
-                    warn_user!("Ignoring unknown action '{name}' bound to pad button {button}");
-                    None
+                    warn_user!("Ignoring unknown action '{name}' bound to pad button {button}")
                 }
-            })
-            .collect()
+            }
+        }
+        accels
     }
 }
 
@@ -121,7 +128,7 @@ mod tests {
     }
 
     #[test]
-    fn configured_buttons_replace_the_defaults() {
+    fn configured_buttons_override_the_defaults() {
         let config = parse("[pad.buttons]\n0 = \"undo\"\n7 = \"pen-#ff8800\"\n");
         let accels = config.pad.accels();
         assert_eq!(
@@ -134,15 +141,32 @@ mod tests {
                 Color::from_name("#ff8800").unwrap()
             ))))
         );
-        // Button 1 is close-overlay by default, but the table was replaced.
+        // Not configured, so the default is kept.
+        assert_eq!(
+            accels.get(GlobalTrigger::PadButton(1)),
+            Some(GlobalAction::CloseOverlay)
+        );
+    }
+
+    #[test]
+    fn none_removes_a_default_binding() {
+        let accels = parse("[pad.buttons]\n1 = \"none\"\n").pad.accels();
         assert_eq!(accels.get(GlobalTrigger::PadButton(1)), None);
+        assert_eq!(
+            accels.get(GlobalTrigger::PadButton(0)),
+            Some(GlobalAction::ToggleOverlay)
+        );
     }
 
     #[test]
     fn unknown_action_names_are_skipped() {
         let config = parse("[pad.buttons]\n0 = \"nonsense\"\n1 = \"undo\"\n");
         let accels = config.pad.accels();
-        assert_eq!(accels.get(GlobalTrigger::PadButton(0)), None);
+        // The typo is ignored, leaving the default in place.
+        assert_eq!(
+            accels.get(GlobalTrigger::PadButton(0)),
+            Some(GlobalAction::ToggleOverlay)
+        );
         assert_eq!(
             accels.get(GlobalTrigger::PadButton(1)),
             Some(GlobalAction::Overlay(Action::Undo))

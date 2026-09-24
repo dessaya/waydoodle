@@ -136,15 +136,11 @@ different file.
 # Listen to drawing tablet pad buttons. Default: true.
 enabled = true
 
-# Pad button bindings. Listing any button replaces the whole default table,
-# so include every button you want bound.
+# Pad button bindings, added to the defaults or overriding them. "none"
+# removes a default binding.
 [pad.buttons]
-0 = "toggle-overlay"
-1 = "close-overlay"
-2 = "eraser"
-3 = "pen-red"
-4 = "pen-green"
-5 = "pen-magenta"
+5 = "undo"
+1 = "none"
 ```
 
 The available actions are:
