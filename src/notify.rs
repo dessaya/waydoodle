@@ -4,6 +4,7 @@
 //! its log output.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use zbus::zvariant::Value;
 
@@ -39,8 +40,18 @@ macro_rules! warn_user {
 
 pub(crate) use warn_user;
 
+static ENABLED: AtomicBool = AtomicBool::new(true);
+
+/// Turns notifications on or off. `warn_user!` still logs when they are off.
+pub(crate) fn set_enabled(enabled: bool) {
+    ENABLED.store(enabled, Ordering::Relaxed);
+}
+
 /// Implementation detail of `warn_user!`; call that instead.
 pub(crate) fn show(message: &str) {
+    if !ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
     if let Err(e) = try_show(message) {
         log::debug!("Failed to show a notification: {e}");
     }

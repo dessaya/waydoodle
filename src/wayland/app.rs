@@ -20,7 +20,7 @@ use super::{WaylandState, cursors::Cursors};
 use crate::{
     Options,
     actions::{GlobalAction, GlobalTrigger},
-    config,
+    config, notify,
     pad::{self, PadHost, Pads},
     tray::{TrayEvent, WaydoodleTray},
     waydoodle::OverlayController,
@@ -35,6 +35,10 @@ impl App {
             Signals::new(&[Signal::SIGUSR1, Signal::SIGUSR2]).expect("Failed to register signals");
 
         let config = config::load(options.config.as_deref());
+        // Set before the configuration is used, so that problems with its values
+        // respect it. Problems reading the file are reported regardless, since
+        // then the setting is unknown.
+        notify::set_enabled(config.notifications.enabled);
 
         let conn = Connection::connect_to_env().expect("Failed to connect to Wayland compositor");
         let (globals, event_queue) =

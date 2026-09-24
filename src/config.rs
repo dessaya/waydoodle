@@ -23,6 +23,7 @@ pub(crate) struct Config {
     pub keys: KeysConfig,
     pub menu: MenuConfig,
     pub drawing: DrawingConfig,
+    pub notifications: NotificationsConfig,
 }
 
 impl Config {
@@ -120,6 +121,19 @@ impl KeysConfig {
             }
         }
         keybindings
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub(crate) struct NotificationsConfig {
+    /// Show warnings as desktop notifications.
+    pub enabled: bool,
+}
+
+impl Default for NotificationsConfig {
+    fn default() -> Self {
+        Self { enabled: true }
     }
 }
 
@@ -438,6 +452,16 @@ mod tests {
         assert_eq!(
             parse("[menu]\nfont_size = 0\n").menu.font().size,
             MenuFont::default().size
+        );
+    }
+
+    #[test]
+    fn notifications_are_enabled_unless_turned_off() {
+        assert!(parse("").notifications.enabled);
+        assert!(
+            !parse("[notifications]\nenabled = false\n")
+                .notifications
+                .enabled
         );
     }
 

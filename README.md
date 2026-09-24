@@ -161,6 +161,11 @@ font_size = 14
 pen = "red"
 background = "transparent"
 pen_radius = 1.5
+
+# Show warnings as desktop notifications. Problems reading this file are
+# shown regardless.
+[notifications]
+enabled = true
 ```
 
 Keyboard shortcuts go in one of three sections: `keys.always`,
@@ -209,6 +214,15 @@ pkill -SIGUSR1 waydoodle
 ```
 pkill -SIGUSR2 waydoodle
 ```
+
+## TODO
+
+- [ ] Don't repeat a notification, for example when a tablet pad that can't be read
+  is plugged in again.
+- [ ] Make the eraser size configurable. Its cursor is a fixed image, so it would
+  have to be drawn at runtime instead.
+- [ ] Use the Wayland global hotkey protocol (`xx-hotkey-v1`) for global shortcuts
+  once compositors support it, instead of relying on signals.
 
 ## License
 
